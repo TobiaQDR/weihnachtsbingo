@@ -2,12 +2,15 @@
 
 Einmalig ca. 20–30 Minuten. Kostet nichts. Du brauchst ein Google-Konto (für Firebase) und ein GitHub-Konto (für die Webseite).
 
+> **Läuft die Seite schon mit der alten Version?** Dann reicht der Abschnitt
+> [„Update auf die neue Version“](#update-auf-die-neue-version) ganz unten.
+
 ## Übersicht
 
 | Datei | Wofür |
 |---|---|
 | `index.html` | Seite für die Spieler (jeder bekommt einen persönlichen Link) |
-| `admin.html` | Seite für dich als Spielleiter: Spieler anlegen, sperren, Wörter ziehen |
+| `admin.html` | Seite für dich als Spielleiter: Spieler anlegen, Felder sperren, Rechte vergeben, Kalender pflegen |
 | `js/firebase-config.js` | **Hier trägst du deine Firebase-Daten ein** |
 | `firestore.rules` | Sicherheitsregeln, werden in Firebase eingefügt |
 
@@ -22,6 +25,8 @@ Einmalig ca. 20–30 Minuten. Kostet nichts. Du brauchst ein Google-Konto (für 
    - **Produktionsmodus** wählen → Erstellen
 4. Links **Build → Authentication → Jetzt starten**
    - Anbieter **E-Mail/Passwort** aktivieren → Speichern
+   - Anbieter **Anonym** ebenfalls aktivieren → Speichern
+     (damit erkennt die Seite die Spieler im Hintergrund, ohne dass sie sich anmelden müssen)
    - Reiter **Users → Nutzer hinzufügen**: deine E-Mail und ein Passwort (das ist dein Spielleiter-Login)
    - Danach siehst du in der Liste die **Nutzer-UID** (lange Zeichenkette) → kopieren
 5. Zahnrad oben links → **Projekteinstellungen → Allgemein → Meine Apps →** Symbol `</>` (Web-App)
@@ -34,8 +39,9 @@ Einmalig ca. 20–30 Minuten. Kostet nichts. Du brauchst ein Google-Konto (für 
    in Firebase unter **Firestore Database → Regeln**. Danach auf **Veröffentlichen** klicken.
 
 > Die Werte in `firebase-config.js` sind nicht geheim, sie stehen später sowieso öffentlich in der Webseite.
-> Geschützt wird alles durch die Regeln: Nur du kannst Wörter ziehen und sperren. Ein Spieler kann
-> nur sein eigenes Feld ändern, und auch das nur bis zur Sperre.
+> Geschützt wird alles durch die Regeln: Nur du kannst sperren und Rechte vergeben. Ein Spieler kann
+> nur sein eigenes Feld ändern, und auch das nur, solange die Felder nicht gesperrt sind. Die Felder aller
+> Spieler kann jeder sehen, die persönlichen Links aber nicht.
 
 ## 2. Lokal ausprobieren (optional)
 
@@ -69,21 +75,26 @@ Bei Klick auf **Link kopieren** bekommst du den Spielerlink, den du in einem zwe
 
 1. `admin.html` öffnen und anmelden.
 2. Unter **Spieler** alle Mitspieler anlegen.
-3. Unter **Felder sperren** das Datum eintragen, ab dem keine Änderungen mehr möglich sind
-   (z. B. 30.11. 23:59), und **Datum speichern** klicken.
+3. Sobald alle ihre Felder ausgefüllt haben, oben den **Schalter „Felder sperren“** umlegen.
+   Mit demselben Schalter kannst du jederzeit wieder entsperren.
 4. Jedem Spieler per **WhatsApp**-Knopf oder **Link kopieren** seinen persönlichen Link schicken.
    **Wichtig:** Jeder Link gehört zu genau einem Spieler, also nicht in die Familiengruppe posten,
    sondern einzeln verschicken.
 
 ## 5. In der Adventszeit
 
-- Täglich `admin.html` öffnen, Wort eintragen und **Wort hinzufügen** klicken. Bei allen Spielern
-  färbt sich das Feld sofort grün.
-- Beim Tippen siehst du schon, bei wem das Wort steht, und auch ähnliche Schreibweisen
-  (z. B. „Plätzchen“ vs. „Plätzchen backen“). So kannst du die Schreibweise anpassen.
-- Ein falsch eingetragenes Wort kannst du mit ✕ wieder entfernen.
-- Volle Reihen, Spalten oder Diagonalen werden rot markiert, und der Spieler sieht „BINGO!“.
-  In der Spielerliste siehst du, wer vorne liegt.
+- Im Reiter **📅 Kalender** gibt es 24 Türchen. Tippt man auf eins, sieht man die Wörter des Tages
+  und bei wem sie im Feld stehen.
+- **Alle Spieler** können die Wörter eines Tages eintragen und ändern (sobald das Türchen offen ist,
+  also ab dem jeweiligen Dezembertag). Als Spielleitung kannst du jeden Tag bearbeiten.
+- **Mehrere Wörter pro Tag** sind möglich, z. B. „Nikolaus“ und „Weihnachtsmann“. Jedes davon zählt
+  als Treffer.
+- Beim Eintippen sieht man schon, bei wem das Wort steht, und auch ähnliche Schreibweisen
+  (z. B. „Plätzchen“ vs. „Plätzchen backen“).
+- Im Reiter **👥 Spieler** kannst du pro Spieler mit dem Schalter **„Darf Tageswörter eintragen“**
+  das Recht wegnehmen und wieder geben.
+- Im Reiter **👀 Alle Felder** sehen alle Spieler jederzeit die Felder der anderen samt Rangliste.
+- Volle Reihen, Spalten oder Diagonalen werden rot-golden markiert, und es gibt Konfetti und „BINGO!“.
 
 ## Tipps für die Mitspieler
 
@@ -98,3 +109,14 @@ Bei Klick auf **Link kopieren** bekommst du den Spielerlink, den du in einem zwe
 
 Der kostenlose Firebase-Tarif „Spark“ erlaubt 50.000 Lesevorgänge und 20.000 Schreibvorgänge **pro Tag**.
 Eine Familie braucht davon nur einen Bruchteil. Es ist keine Kreditkarte nötig, also können keine Kosten entstehen.
+
+## Update auf die neue Version
+
+Die bisherigen Spieler-Links bleiben gültig, die eingetragenen Felder bleiben erhalten.
+
+1. In Firebase unter **Authentication → Sign-in method** den Anbieter **Anonym** aktivieren.
+2. Den Inhalt von `firestore.rules` in Firebase unter **Firestore Database → Regeln** einfügen und
+   **Veröffentlichen**.
+3. Alle Dateien (inklusive Ordner `js` mit der neuen `ui.js`) wieder bei GitHub hochladen.
+4. **Einmal `admin.html` öffnen und anmelden.** Dabei werden die Daten automatisch umgestellt
+   (Meldung „Daten auf das neue Format umgestellt“). Erst danach funktionieren die Spieler-Links wieder.

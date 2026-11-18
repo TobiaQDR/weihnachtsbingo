@@ -1,25 +1,37 @@
 import {
-  doc, collection, onSnapshot, updateDoc,
+  doc, collection, onSnapshot, getDoc, setDoc, updateDoc, serverTimestamp,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
-import { db, configured } from "./firebase.js";
 import {
-  CELL_COUNT, normalize, cellsOf, drawnSet, hitMask, bingoLines,
-  isLocked, lockDateOf, sortDraws, formatDay, formatDateTime, escapeHtml,
+  getAuth, signInAnonymously, onAuthStateChanged,
+} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+import { app, db, configured } from "./firebase.js";
+import {
+  CELL_COUNT, normalize, cleanWord, cellsOf, canAddWords, daysMap, drawnMap, scoreBoard, ranking,
+  isDayOpen, escapeHtml,
 } from "./bingo.js";
+import {
+  $, toast, initTabs, startSnow, confetti, openOverlay, closeOverlay, miniGridHtml,
+  calendarHtml, createDayEditor, storageGet, storageSet, reducedMotion,
+} from "./ui.js";
 
-const $ = (id) => document.getElementById(id);
-const state = { player: null, settings: null, draws: [], editIndex: null };
+const state = {
+  code: null,
+  boardId: null,
+  boards: null,     // alle Felder
+  dayDocs: null,    // Rohdaten der Tage
+  days: new Map(),  // Tag → Wörter
+  settings: null,
+  member: false,    // darf schreiben (anonym angemeldet und Link bestätigt)
+  editIndex: null,
+  prevMask: null,
+};
 
 // ---------- Start ----------
 
 function getCode() {
   const fromUrl = new URLSearchParams(location.search).get("spieler");
-  try {
-    if (fromUrl) localStorage.setItem("bingoCode", fromUrl);
-    return fromUrl || localStorage.getItem("bingoCode");
-  } catch {
-    return fromUrl;
-  }
+  if (fromUrl) storageSet("bingoCode", fromUrl);
+  return fromUrl || storageGet("bingoCode");
 }
 
 function forgetCode() {
@@ -33,41 +45,72 @@ function showError(text) {
   $("error").textContent = text;
 }
 
-const code = getCode();
+startSnow();
+state.code = getCode();
 
 if (!configured) {
   showError("Das Spiel ist noch nicht eingerichtet (Firebase-Daten fehlen in js/firebase-config.js).");
-} else if (!code) {
+} else if (!state.code) {
   showError("Bitte öffne den persönlichen Link, den du für das Weihnachtsbingo bekommen hast.");
 } else {
-  start(code);
+  start().catch(onLoadError);
 }
 
-function start(code) {
-  const playerRef = doc(db, "players", code);
+async function start() {
+  const snap = await getDoc(doc(db, "players", state.code));
+  if (!snap.exists()) {
+    forgetCode();
+    showError("Diesen Spieler-Link gibt es nicht (mehr). Bitte frag beim Spielleiter nach deinem Link.");
+    return;
+  }
+  state.boardId = snap.data().boardId;
+  if (!state.boardId) {
+    showError("Das Spiel wurde gerade aktualisiert. Der Spielleiter muss einmal die Spielleiter-Seite öffnen – danach geht es hier weiter.");
+    return;
+  }
 
-  onSnapshot(playerRef, (snap) => {
-    if (!snap.exists()) {
-      forgetCode();
-      showError("Diesen Spieler-Link gibt es nicht (mehr). Bitte frag beim Spielleiter nach deinem Link.");
-      return;
+  onSnapshot(collection(db, "boards"), (s) => {
+    state.boards = s.docs.map((d) => ({ id: d.id, ...d.data() }));
+    render();
+  }, onLoadError);
+
+  onSnapshot(collection(db, "days"), (s) => {
+    state.dayDocs = s.docs.map((d) => ({ id: d.id, ...d.data() }));
+    state.days = daysMap(state.dayDocs);
+    render();
+  }, onLoadError);
+
+  onSnapshot(doc(db, "game", "settings"), (s) => {
+    state.settings = s.exists() ? s.data() : {};
+    render();
+  }, onLoadError);
+
+  // Türchen öffnen sich um Mitternacht
+  setInterval(renderCalendar, 60_000);
+
+  joinGame();
+}
+
+/** Anonym anmelden und diesen Browser mit dem Spieler verknüpfen (nötig zum Schreiben). */
+async function joinGame() {
+  try {
+    const auth = getAuth(app);
+    await (typeof auth.authStateReady === "function"
+      ? auth.authStateReady()
+      : new Promise((resolve) => { const off = onAuthStateChanged(auth, () => { off(); resolve(); }); }));
+    const user = auth.currentUser ?? (await signInAnonymously(auth)).user;
+    const ref = doc(db, "members", user.uid);
+    const m = await getDoc(ref);
+    if (!m.exists() || m.data().code !== state.code || m.data().boardId !== state.boardId) {
+      await setDoc(ref, { code: state.code, boardId: state.boardId });
     }
-    state.player = { ref: playerRef, ...snap.data() };
-    render();
-  }, onLoadError);
-
-  onSnapshot(doc(db, "game", "settings"), (snap) => {
-    state.settings = snap.exists() ? snap.data() : {};
-    render();
-  }, onLoadError);
-
-  onSnapshot(collection(db, "draws"), (snap) => {
-    state.draws = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-    render();
-  }, onLoadError);
-
-  // Der Sperrzeitpunkt kann erreicht werden, ohne dass sich Daten ändern
-  setInterval(render, 30_000);
+    state.member = true;
+  } catch (err) {
+    console.error("Anmeldung fehlgeschlagen:", err);
+    state.member = false;
+    toast("Du kannst gerade nur zuschauen – die Anmeldung hat nicht geklappt.", 6000);
+  }
+  render();
 }
 
 function onLoadError(err) {
@@ -77,78 +120,167 @@ function onLoadError(err) {
 
 // ---------- Anzeige ----------
 
+const me = () => state.boards?.find((b) => b.id === state.boardId);
+const locked = () => state.settings?.locked === true;
+
+let tabs;
+let firstRender = true;
+
 function render() {
-  const { player, settings } = state;
-  if (!player || settings === null) return;
+  if (!state.boards || !state.dayDocs || !state.settings) return;
+  const board = me();
+  if (!board) {
+    showError("Dein Feld wurde gelöscht. Bitte frag beim Spielleiter nach.");
+    return;
+  }
 
   $("loading").hidden = true;
   $("error").hidden = true;
-  $("game").hidden = false;
-  $("greeting").textContent = `Hallo ${player.name}!`;
-
-  const locked = isLocked(settings);
-  const cells = cellsOf(player);
-  const drawn = drawnSet(state.draws);
-  const mask = hitMask(cells, drawn);
-  const lines = bingoLines(mask);
-  const onLine = new Set(lines.flat());
-
-  // Bingo-Hinweis
-  const banner = $("bingo");
-  banner.hidden = lines.length === 0;
-  banner.textContent = lines.length === 1
-    ? "🎉 BINGO! Du hast eine volle Reihe!"
-    : `🎉 BINGO! Du hast ${lines.length} volle Reihen!`;
-
-  // Status
-  const filled = cells.filter((c) => c.trim() !== "").length;
-  const lockDate = lockDateOf(settings);
-  let status;
-  if (locked) {
-    status = "🔒 Die Felder sind gesperrt. Jetzt heißt es abwarten, welche Wörter gezogen werden!";
-  } else {
-    status = "✏️ Tippe auf ein Feld, um ein Wort einzutragen.";
-    if (filled < CELL_COUNT) status += ` Noch ${CELL_COUNT - filled} Felder frei.`;
-    if (lockDate) status += ` Die Felder werden am ${formatDateTime(lockDate)} gesperrt.`;
+  if ($("game").hidden) {
+    $("game").hidden = false;
+    tabs ??= initTabs($("tabs"), "bingoTab");
   }
-  $("status").textContent = status;
+  $("greeting").textContent = `Hallo ${board.name}! ✨`;
 
-  // Bingo-Feld
-  const grid = $("grid");
-  grid.classList.toggle("locked", locked);
-  grid.innerHTML = cells.map((word, i) => {
-    const classes = ["cell"];
-    if (!word.trim()) classes.push("empty");
-    if (mask[i]) classes.push("hit");
-    if (onLine.has(i)) classes.push("line");
-    const label = word.trim() ? escapeHtml(word) : (locked ? "–" : "+");
-    const aria = `Feld ${i + 1}: ${escapeHtml(word) || "leer"}${mask[i] ? ", gezogen" : ""}`;
-    return `<button type="button" class="${classes.join(" ")}" data-i="${i}"
-      ${locked ? "disabled" : ""} aria-label="${aria}"><span>${label}</span></button>`;
-  }).join("");
+  renderMine(board);
+  renderAll();
+  renderCalendar();
+  dayEditor.refresh();
 
-  const hits = mask.filter(Boolean).length;
-  $("progress").textContent = `${hits} von ${CELL_COUNT} Feldern getroffen`;
-
-  // Gezogene Wörter
-  const mine = new Set(cells.map(normalize));
-  const draws = sortDraws(state.draws);
-  $("draws").innerHTML = draws.length === 0
-    ? `<li class="muted">Noch keine Wörter gezogen.</li>`
-    : draws.map((d) => {
-        const have = mine.has(normalize(d.word));
-        return `<li class="${have ? "have" : ""}">
-          <span class="date">${escapeHtml(formatDay(d.date))}</span>
-          <span class="word">${escapeHtml(d.word)}</span>
-          ${have ? `<span class="tick" title="Steht in deinem Feld">✓</span>` : ""}
-        </li>`;
-      }).join("");
-
-  // Wurde gesperrt, während das Eingabefenster offen ist → schließen
-  if (locked && state.editIndex !== null) closeEditor();
+  if (locked() && state.editIndex !== null) closeEditor();
+  firstRender = false;
 }
 
-// ---------- Eingabe ----------
+function buildGrid() {
+  const grid = $("grid");
+  grid.innerHTML = Array.from({ length: CELL_COUNT }, (_, i) =>
+    `<button type="button" class="cell" data-i="${i}" style="--i:${i}"><span class="cell-word"></span><span class="cell-day"></span></button>`,
+  ).join("");
+  grid.addEventListener("animationend", (e) => {
+    if (e.animationName === "hit-pop") e.target.classList.remove("pop");
+  });
+  grid.classList.add("intro");
+  setTimeout(() => grid.classList.remove("intro"), 1400);
+}
+
+function renderMine(board) {
+  const drawn = drawnMap(state.days);
+  const score = scoreBoard(board, drawn);
+  const isLocked = locked();
+  const canEdit = !isLocked && state.member;
+  const onLine = new Set(score.lines.flat());
+
+  // Bingo-Hinweis + Konfetti, wenn eine neue Reihe dazukommt
+  const banner = $("bingo");
+  const n = score.lines.length;
+  banner.hidden = n === 0;
+  banner.textContent = n === 1 ? "🎉 BINGO! Du hast eine volle Reihe!" : `🎉 BINGO! Du hast ${n} volle Reihen!`;
+  const key = `bingoLines:${state.boardId}`;
+  const seen = Number(storageGet(key) || 0);
+  if (n > seen) setTimeout(confetti, firstRender ? 600 : 150);
+  if (n !== seen) storageSet(key, String(n));
+
+  // Status
+  const free = CELL_COUNT - score.filled;
+  $("status").innerHTML = isLocked
+    ? "🔒 Die Felder sind gesperrt – jetzt heißt es abwarten!"
+    : `✏️ Tippe auf ein Feld, um ein Wort einzutragen${free ? ` · <strong>noch ${free} frei</strong>` : " · alles ausgefüllt 👍"}`;
+  $("status").classList.toggle("locked", isLocked);
+
+  // Feld
+  const grid = $("grid");
+  if (!grid.children.length) buildGrid();
+  grid.classList.toggle("locked", !canEdit);
+  [...grid.children].forEach((btn, i) => {
+    const word = score.cells[i];
+    const hit = score.mask[i];
+    const wasHit = state.prevMask?.[i] ?? hit;
+    btn.classList.toggle("empty", !word.trim());
+    btn.classList.toggle("hit", hit);
+    btn.classList.toggle("line", onLine.has(i));
+    btn.disabled = !canEdit;
+    btn.querySelector(".cell-word").textContent = word.trim() ? word : (canEdit ? "+" : "–");
+    const day = hit ? drawn.get(normalize(word)) : null;
+    btn.querySelector(".cell-day").textContent = day ? `${day}.` : "";
+    btn.setAttribute("aria-label", `Feld ${i + 1}: ${word || "leer"}${hit ? `, am ${day}. Dezember gezogen` : ""}`);
+    if (hit && !wasHit && !reducedMotion()) {
+      btn.classList.remove("pop");
+      void btn.offsetWidth;
+      btn.classList.add("pop");
+    }
+  });
+  state.prevMask = score.mask;
+
+  $("progress").textContent = `${score.hits} von ${CELL_COUNT} Feldern getroffen`;
+  $("progress-fill").style.width = `${(score.hits / CELL_COUNT) * 100}%`;
+}
+
+const MEDALS = ["🥇", "🥈", "🥉"];
+
+function renderAll() {
+  const drawn = drawnMap(state.days);
+  const rows = ranking(state.boards, drawn);
+  $("boards").innerHTML = rows.map((r, idx) => {
+    const isMe = r.board.id === state.boardId;
+    const rank = r.hits > 0 && idx < 3 ? MEDALS[idx] : `${idx + 1}.`;
+    return `<article class="board-card${isMe ? " me" : ""}" style="--i:${idx}">
+      <header>
+        <span class="rank">${rank}</span>
+        <strong class="name">${escapeHtml(r.board.name)}</strong>
+        ${isMe ? `<span class="tag">Du</span>` : ""}
+        ${r.lines.length ? `<span class="badge">BINGO ×${r.lines.length}</span>` : ""}
+      </header>
+      <p class="meta">${r.hits} Treffer · ${r.filled}/${CELL_COUNT} ausgefüllt</p>
+      <div class="progress-bar small"><span style="width:${(r.hits / CELL_COUNT) * 100}%"></span></div>
+      ${miniGridHtml(r, drawn)}
+    </article>`;
+  }).join("");
+}
+
+function renderCalendar() {
+  const board = me();
+  if (!board) return;
+  $("calendar").innerHTML = calendarHtml(state.days, state.boards, { myCells: cellsOf(board) });
+  $("calendar-note").textContent = canAddWords(board) && state.member
+    ? "Tippe auf ein Türchen, um die Wörter des Tages zu sehen oder einzutragen."
+    : "Tippe auf ein Türchen, um die Wörter des Tages zu sehen.";
+}
+
+// ---------- Kalender ----------
+
+const dayEditor = createDayEditor({
+  getBoards: () => state.boards ?? [],
+  getDays: () => state.days,
+  getMeta: (n) => state.dayDocs?.find((d) => d.id === String(n)) ?? null,
+  onSave: async (n, words) => {
+    try {
+      await setDoc(doc(db, "days", String(n)), {
+        words, updatedBy: me()?.name ?? "", updatedAt: serverTimestamp(),
+      });
+      toast(`🎁 ${n}. Dezember gespeichert`);
+      return true;
+    } catch (err) {
+      console.error(err);
+      toast(canAddWords(me())
+        ? "Speichern hat nicht geklappt. Bitte nochmal versuchen."
+        : "Du darfst gerade keine Tageswörter eintragen.");
+      return false;
+    }
+  },
+});
+
+$("calendar").addEventListener("click", (e) => {
+  const door = e.target.closest("[data-day]");
+  if (!door) return;
+  const n = Number(door.dataset.day);
+  let note = "";
+  if (!isDayOpen(n)) note = `🔒 Dieses Türchen öffnet sich am ${n}. Dezember.`;
+  else if (!canAddWords(me())) note = "Du darfst gerade keine Tageswörter eintragen.";
+  else if (!state.member) note = "Eintragen ist gerade nicht möglich. Lade die Seite bitte neu.";
+  dayEditor.open(n, { canEdit: !note, note });
+});
+
+// ---------- Eingabe ins eigene Feld ----------
 
 $("grid").addEventListener("click", (e) => {
   const btn = e.target.closest(".cell");
@@ -161,23 +293,23 @@ function openEditor(i) {
   const row = Math.floor(i / 5) + 1;
   const col = (i % 5) + 1;
   $("editor-title").textContent = `Reihe ${row}, Spalte ${col}`;
-  $("editor-input").value = cellsOf(state.player)[i];
+  $("editor-input").value = cellsOf(me())[i];
   $("editor-msg").textContent = "";
-  $("editor").hidden = false;
+  openOverlay($("editor"));
   $("editor-input").focus();
   $("editor-input").select();
 }
 
 function closeEditor() {
   state.editIndex = null;
-  $("editor").hidden = true;
+  closeOverlay($("editor"));
 }
 
 async function saveCell(value) {
   const i = state.editIndex;
   if (i === null) return;
-  const word = value.replace(/\s+/g, " ").trim();
-  const cells = cellsOf(state.player);
+  const word = cleanWord(value);
+  const cells = cellsOf(me());
 
   if (word && cells.some((c, j) => j !== i && normalize(c) === normalize(word))) {
     $("editor-msg").textContent = "Dieses Wort steht schon in einem anderen Feld.";
@@ -187,10 +319,10 @@ async function saveCell(value) {
   cells[i] = word;
   closeEditor();
   try {
-    await updateDoc(state.player.ref, { cells });
+    await updateDoc(doc(db, "boards", state.boardId), { cells });
   } catch (err) {
     console.error(err);
-    toast(isLocked(state.settings)
+    toast(locked()
       ? "Die Felder sind inzwischen gesperrt."
       : "Speichern hat nicht geklappt. Bitte nochmal versuchen.");
   }
@@ -203,13 +335,4 @@ $("editor-form").addEventListener("submit", (e) => {
 $("editor-clear").addEventListener("click", () => saveCell(""));
 $("editor-cancel").addEventListener("click", closeEditor);
 $("editor").addEventListener("click", (e) => { if (e.target === $("editor")) closeEditor(); });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeEditor(); });
-
-let toastTimer;
-function toast(text) {
-  const el = $("toast");
-  el.textContent = text;
-  el.hidden = false;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.hidden = true; }, 4000);
-}
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && state.editIndex !== null) closeEditor(); });

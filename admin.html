@@ -3,78 +3,79 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#14532d">
+  <meta name="theme-color" content="#0b2a1f">
   <meta name="robots" content="noindex">
   <title>Bingo Spielleitung</title>
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Mountains+of+Christmas:wght@700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Mountains+of+Christmas:wght@700&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body class="admin">
   <header class="top">
-    <h1>🎅 Spielleitung</h1>
-    <p class="greeting">Weihnachtsbingo 2026</p>
+    <div class="garland" aria-hidden="true"></div>
+    <h1><span class="star" aria-hidden="true">★</span> Spielleitung</h1>
+    <p class="greeting">Weihnachtsbingo 2026 🎅</p>
   </header>
 
   <main class="wrap">
     <div id="error" class="card center error" hidden></div>
 
     <!-- Anmeldung -->
-    <form id="login" class="card" hidden>
+    <form id="login" class="card pop-in" hidden>
       <h2>Anmelden</h2>
       <label>E-Mail <input id="login-email" type="email" autocomplete="username" required></label>
       <label>Passwort <input id="login-pass" type="password" autocomplete="current-password" required></label>
       <p id="login-msg" class="msg"></p>
-      <button type="submit" class="btn primary">Anmelden</button>
+      <button type="submit" class="btn primary block">Anmelden</button>
     </form>
 
     <div id="admin" hidden>
-      <!-- Spielstatus -->
-      <section class="card">
-        <h2>Felder sperren</h2>
-        <p id="lock-status" class="status"></p>
-        <div class="row">
-          <button type="button" id="lock-toggle" class="btn primary"></button>
-        </div>
-        <label>Automatisch sperren am
-          <input id="lock-date" type="datetime-local">
-        </label>
-        <div class="row">
-          <button type="button" id="lock-date-save" class="btn">Datum speichern</button>
-          <button type="button" id="lock-date-clear" class="btn ghost">Datum entfernen</button>
+      <!-- Sperre -->
+      <section class="card lock-card" id="lock-card">
+        <div class="lock-row">
+          <span class="lock-icon" id="lock-icon" aria-hidden="true">✏️</span>
+          <div class="lock-text">
+            <strong id="lock-title">Felder offen</strong>
+            <span id="lock-sub" class="muted">Spieler können ihre Felder bearbeiten.</span>
+          </div>
+          <label class="switch big" title="Felder sperren / entsperren">
+            <input type="checkbox" id="lock-toggle" aria-label="Felder sperren">
+            <span></span>
+          </label>
         </div>
       </section>
 
-      <!-- Tageswörter -->
-      <section class="card">
-        <h2>Wort ziehen</h2>
-        <form id="draw-form" class="stack" autocomplete="off">
-          <label>Wort <input id="draw-word" type="text" maxlength="40" required></label>
-          <label>Tag <input id="draw-date" type="date" required></label>
-          <p id="draw-hint" class="hint"></p>
-          <button type="submit" class="btn primary">Wort hinzufügen</button>
-        </form>
-        <h3>Bisher gezogen</h3>
-        <ul id="draws" class="draws admin-draws"></ul>
-      </section>
+      <nav class="tabs" id="tabs" role="tablist">
+        <button type="button" data-tab="players" role="tab">👥 <span>Spieler</span></button>
+        <button type="button" data-tab="calendar" role="tab">📅 <span>Kalender</span></button>
+        <span class="tab-ind" aria-hidden="true"></span>
+      </nav>
 
       <!-- Spieler -->
-      <section class="card">
-        <h2>Spieler</h2>
-        <form id="player-form" class="row" autocomplete="off">
-          <input id="player-name" type="text" maxlength="30" placeholder="Name, z. B. Oma" required aria-label="Name">
-          <button type="submit" class="btn primary">Hinzufügen</button>
-        </form>
-        <div id="players" class="players"></div>
+      <section class="view" data-view="players" hidden>
+        <section class="card">
+          <h2>Neuer Spieler</h2>
+          <form id="player-form" class="row" autocomplete="off">
+            <input id="player-name" type="text" maxlength="30" placeholder="Name, z. B. Oma" required aria-label="Name">
+            <button type="submit" class="btn primary">Hinzufügen</button>
+          </form>
+        </section>
+        <div id="players" class="boards"></div>
       </section>
 
-      <p class="center"><button type="button" id="logout" class="btn ghost">Abmelden</button></p>
+      <!-- Kalender -->
+      <section class="view" data-view="calendar" hidden>
+        <p class="intro-text">Tippe auf einen Tag, um Wörter einzutragen oder zu ändern. Als Spielleitung kannst du auch Türchen bearbeiten, die noch zu sind.</p>
+        <div id="calendar" class="calendar"></div>
+      </section>
+
+      <p class="center"><button type="button" id="logout" class="btn ghost light">Abmelden</button></p>
     </div>
   </main>
 
-  <div id="toast" class="toast" hidden></div>
+  <div id="toast" class="toast" role="status"></div>
 
   <script type="module" src="js/admin.js"></script>
 </body>
