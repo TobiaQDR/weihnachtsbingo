@@ -105,16 +105,38 @@ export function scoreBoard(board, drawn) {
   const lines = bingoLines(mask);
   return {
     board, cells, mask, lines,
+    // Längste Reihe: meiste Treffer in einer Reihe, Spalte oder Diagonale (5 = Bingo)
+    bestLine: Math.max(...LINES.map((line) => line.filter((i) => mask[i]).length)),
     hits: mask.filter(Boolean).length,
     filled: cells.filter((c) => c.trim()).length,
   };
 }
 
-/** Rangliste: meiste Bingos, dann meiste Treffer, dann Name. */
-export function ranking(boards, drawn) {
-  return boards.map((b) => scoreBoard(b, drawn))
-    .sort((a, b) => b.lines.length - a.lines.length || b.hits - a.hits
-      || String(a.board.name).localeCompare(String(b.board.name), "de"));
+/**
+ * Wertungen für die Rangliste: jeweils Kennzahlen in absteigender Wichtigkeit.
+ *  - "lines": meiste Bingos (auch diagonal), dann längste Reihe, dann Treffer
+ *  - "hits":  meiste Treffer, dann Bingos, dann längste Reihe
+ */
+export const RANKING_MODES = {
+  lines: (s) => [s.lines.length, s.bestLine, s.hits],
+  hits: (s) => [s.hits, s.lines.length, s.bestLine],
+};
+
+/**
+ * Rangliste nach der gewählten Wertung. Jede Zeile bekommt `rank`;
+ * wer in allen Kennzahlen gleichauf ist, teilt sich den Platz (1, 1, 3, …).
+ */
+export function ranking(boards, drawn, mode = "lines") {
+  const keyOf = RANKING_MODES[mode] ?? RANKING_MODES.lines;
+  const cmp = (a, b) => {
+    const ka = keyOf(a), kb = keyOf(b);
+    for (let i = 0; i < ka.length; i++) if (ka[i] !== kb[i]) return kb[i] - ka[i];
+    return 0;
+  };
+  const rows = boards.map((b) => scoreBoard(b, drawn))
+    .sort((a, b) => cmp(a, b) || String(a.board.name).localeCompare(String(b.board.name), "de"));
+  rows.forEach((r, i) => { r.rank = i > 0 && cmp(rows[i - 1], r) === 0 ? rows[i - 1].rank : i + 1; });
+  return rows;
 }
 
 export function boardsWith(boards, word) {

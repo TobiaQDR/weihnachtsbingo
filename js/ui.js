@@ -223,8 +223,9 @@ export function miniGridHtml(score, drawn) {
  * @param days Map Tag → Wörter
  * @param boards alle Felder
  * @param myCells (optional) eigene Wörter, um eigene Treffer hervorzuheben
+ * @param songs  (optional) (n) => { picked, random } – Lieder des Abends
  */
-export function calendarHtml(days, boards, { myCells = [], admin = false } = {}) {
+export function calendarHtml(days, boards, { myCells = [], admin = false, songs = () => null } = {}) {
   const mine = new Set(myCells.map(normalize).filter(Boolean));
   return dayNumbers().map((n, idx) => {
     const words = days.get(n) ?? [];
@@ -239,12 +240,16 @@ export function calendarHtml(days, boards, { myCells = [], admin = false } = {})
     for (const w of words) for (const b of boardsWith(boards, w)) hitters.add(b.id);
     const shown = words.slice(0, 3).map(escapeHtml).join("<br>");
     const more = words.length > 3 ? `<small>+${words.length - 3} weitere</small>` : "";
+    const s = songs(n);
+    const songCount = s ? s.picked.length + s.random.length : 0;
+    const songTitles = s ? [...s.picked.map((p) => p.title), ...s.random] : [];
     return `<button type="button" class="${cls.join(" ")}" data-day="${n}" style="--i:${idx}"
-        aria-label="${n}. Dezember${words.length ? ": " + escapeHtml(words.join(", ")) : ""}">
+        aria-label="${n}. Dezember${words.length ? ": " + escapeHtml(words.join(", ")) : ""}${songCount ? `, Lieder: ${escapeHtml(songTitles.join(", "))}` : ""}">
       <span class="door-num">${n}</span>
       ${words.length ? `<span class="door-words">${shown}${more}</span>`
         : `<span class="door-empty">${open ? "＋" : "❄"}</span>`}
       ${hitters.size ? `<span class="door-hits" title="So viele Spieler haben ein Wort von diesem Tag">🎯 ${hitters.size}</span>` : ""}
+      ${songCount ? `<span class="door-songs" title="${escapeHtml(songTitles.join(" · "))}">🎶 ${songCount}</span>` : ""}
       ${iHave ? `<span class="door-star" title="Steht in deinem Feld">★</span>` : ""}
     </button>`;
   }).join("");
@@ -257,8 +262,10 @@ export function calendarHtml(days, boards, { myCells = [], admin = false } = {})
  * @param opts.getDays    () => Map Tag → Wörter
  * @param opts.getMeta    (n) => { updatedBy } oder null
  * @param opts.onSave     async (n, words) => boolean
+ * @param opts.getSongs   (n) => { picked, random } oder null – Lieder des Abends
+ * @param opts.onOpenSongs (n) => void – zum Lieder-Reiter wechseln
  */
-export function createDayEditor({ getBoards, getDays, getMeta = () => null, onSave }) {
+export function createDayEditor({ getBoards, getDays, getMeta = () => null, onSave, getSongs = () => null, onOpenSongs = null }) {
   const overlay = document.createElement("div");
   overlay.className = "overlay";
   overlay.hidden = true;
@@ -281,6 +288,7 @@ export function createDayEditor({ getBoards, getDays, getMeta = () => null, onSa
         <p class="hint" id="dd-hint">Mehrere Wörter möglich, z. B. „Nikolaus“ und „Weihnachtsmann“. Jedes zählt als Treffer.</p>
       </div>
       <p class="dd-note" id="dd-note" hidden></p>
+      <div class="dd-songs" id="dd-songs" hidden></div>
       <div class="buttons">
         <button type="button" class="btn ghost" id="dd-cancel">Abbrechen</button>
         <button type="submit" class="btn primary" id="dd-save">Speichern</button>
@@ -307,6 +315,22 @@ export function createDayEditor({ getBoards, getDays, getMeta = () => null, onSa
             </span>` : ""}
           </li>`;
         }).join("");
+  }
+
+  function renderSongs() {
+    const box = q("#dd-songs");
+    const s = st.day !== null ? getSongs(st.day) : null;
+    box.hidden = !s;
+    if (!s) return;
+    const rows = [
+      ...s.picked.map((p) => `<li class="song picked"><span class="song-title">${escapeHtml(p.title)}</span>
+        <span class="song-tag">👤 ${escapeHtml(p.by || "Spieler")}</span></li>`),
+      ...s.random.map((t) => `<li class="song random"><span class="song-title">${escapeHtml(t)}</span>
+        <span class="song-tag">🎲 Zufall</span></li>`),
+    ];
+    box.innerHTML = `<h3>🎶 Lieder des Abends</h3>
+      <ul class="song-list">${rows.join("") || `<li class="song free">Noch keine Lieder ausgesucht.</li>`}</ul>
+      ${onOpenSongs ? `<button type="button" class="btn small ghost" id="dd-to-songs">Lieder aussuchen ›</button>` : ""}`;
   }
 
   function updateHint() {
@@ -368,6 +392,7 @@ export function createDayEditor({ getBoards, getDays, getMeta = () => null, onSa
     input.value = "";
     updateHint();
     renderWords();
+    renderSongs();
     openOverlay(overlay);
     if (canEdit && !st.words.length) setTimeout(() => input.focus(), 60);
   }
@@ -399,6 +424,14 @@ export function createDayEditor({ getBoards, getDays, getMeta = () => null, onSa
       input.focus();
       input.select();
     }
+  });
+
+  q("#dd-songs").addEventListener("click", (e) => {
+    if (!e.target.closest("#dd-to-songs")) return;
+    if (st.dirty && st.canEdit && !confirm("Änderungen verwerfen?")) return;
+    const n = st.day;
+    close();
+    onOpenSongs(n);
   });
 
   input.addEventListener("input", updateHint);
@@ -433,6 +466,6 @@ export function createDayEditor({ getBoards, getDays, getMeta = () => null, onSa
     if (e.key === "Escape" && !overlay.hidden && !(st.dirty && st.canEdit)) close();
   });
 
-  return { open, close, isOpen: () => st.day !== null, refresh: () => { if (st.day !== null) renderWords(); } };
+  return { open, close, isOpen: () => st.day !== null, refresh: () => { if (st.day !== null) { renderWords(); renderSongs(); } } };
 }
 

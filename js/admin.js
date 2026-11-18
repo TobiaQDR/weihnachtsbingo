@@ -300,7 +300,7 @@ function renderPlayers() {
     const code = codeOf.get(id);
     const link = playerLink(code);
     card.querySelector(".ph").innerHTML = `
-      <span class="rank">${idx + 1}.</span>
+      <span class="rank">${r.rank}.</span>
       <strong class="name">${escapeHtml(b.name)}</strong>
       ${r.lines.length ? `<span class="badge">BINGO ×${r.lines.length}</span>` : ""}`;
     const hasPin = Boolean(state.players.find((p) => p.boardId === id)?.pinKey);
@@ -369,13 +369,15 @@ async function copy(text) {
 
 function renderCalendar() {
   if (!state.boards) return;
-  $("calendar").innerHTML = calendarHtml(state.days, state.boards, { admin: true });
+  $("calendar").innerHTML = calendarHtml(state.days, state.boards, { admin: true, songs: songsView.getDay });
 }
 
 const dayEditor = createDayEditor({
   getBoards: () => state.boards ?? [],
   getDays: () => state.days,
   getMeta: (n) => state.dayDocs.find((d) => d.id === String(n)) ?? null,
+  getSongs: (n) => songsView.getDay(n),
+  onOpenSongs: (n) => { songsView.showDay(n); tabs?.show("songs"); },
   onSave: (n, words) => {
     const ref = doc(db, "days", String(n));
     return save(
@@ -398,6 +400,7 @@ const songsView = createSongsView({
   root: $("songs"),
   admin: true,
   getUser: () => ({ name: "Spielleitung", canEdit: true, note: "" }),
+  onChange: () => { renderCalendar(); dayEditor.refresh(); },
 });
 
 // ---------- Hilfen ----------

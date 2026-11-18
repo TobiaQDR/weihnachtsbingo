@@ -52,6 +52,7 @@ Songs a player chooses (`picked`) are fixed for players; random songs (`random`)
 
 - Words are compared via `normalize()`, which ignores case and extra whitespace. Spelling still matters ("Glühwein" ≠ "Gluehwein").
 - Every word of every day counts as drawn. A day can hold several words (e.g. "Nikolaus" and "Weihnachtsmann"), and each one is its own hit.
+- Ranking (`ranking(boards, drawn, mode)` with `RANKING_MODES`): `"lines"` = bingos (rows, columns and both diagonals), then `bestLine` (most hits in one line), then hits; `"hits"` = hits, then bingos, then `bestLine`. Ties in all keys share a `rank` (1, 1, 3). The player picks the mode in "Alle Felder" (stored as `bingoRanking` in localStorage); the admin list always uses `"lines"`.
 - In the player UI, a day's door becomes editable only from that December day of `SEASON_YEAR` (`isDayOpen`). The rules do **not** enforce this, and the admin can always edit.
 
 ### Rendering conventions

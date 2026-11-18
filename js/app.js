@@ -37,6 +37,7 @@ const songsView = createSongsView({
     if (!state.member) return { name: "", canEdit: false, note: "Aussuchen ist gerade nicht möglich. Lade die Seite bitte neu." };
     return { name: me()?.name ?? "", canEdit: true, note: "" };
   },
+  onChange: () => { renderCalendar(); dayEditor.refresh(); },
 });
 
 // ---------- Start ----------
@@ -513,31 +514,68 @@ function renderAccount() {
 
 const MEDALS = ["🥇", "🥈", "🥉"];
 
-function renderAll() {
+/** Wertung der Rangliste: "lines" (Bingos & längste Reihe) oder "hits" (meiste Treffer). */
+let rankMode = storageGet("bingoRanking") === "hits" ? "hits" : "lines";
+
+function renderRankMode() {
+  for (const b of $("rank-mode").querySelectorAll("[data-mode]")) {
+    const on = b.dataset.mode === rankMode;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-checked", String(on));
+  }
+  $("rank-mode").style.setProperty("--idx", rankMode === "hits" ? 1 : 0);
+}
+
+$("rank-mode").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-mode]");
+  if (!b || b.dataset.mode === rankMode) return;
+  rankMode = b.dataset.mode;
+  storageSet("bingoRanking", rankMode);
+  renderAll(true);
+});
+
+function renderAll(reorder = false) {
+  renderRankMode();
   const drawn = drawnMap(state.days);
-  const rows = ranking(state.boards, drawn);
-  $("boards").innerHTML = rows.map((r, idx) => {
+  const rows = ranking(state.boards, drawn, rankMode);
+  const boards = $("boards");
+  boards.innerHTML = rows.map((r, idx) => {
     const isMe = r.board.id === state.boardId;
-    const rank = r.hits > 0 && idx < 3 ? MEDALS[idx] : `${idx + 1}.`;
+    const scored = rankMode === "hits" ? r.hits > 0 : r.bestLine > 0;
+    const medal = scored && r.rank <= 3 ? MEDALS[r.rank - 1] : "";
+    const main = rankMode === "hits"
+      ? `<strong>${r.hits} Treffer</strong> · ${r.lines.length} Bingo · längste Reihe ${r.bestLine}/5`
+      : `<strong>${r.lines.length} Bingo</strong> · längste Reihe ${r.bestLine}/5 · ${r.hits} Treffer`;
     return `<article class="board-card${isMe ? " me" : ""}" style="--i:${idx}">
       <header>
-        <span class="rank">${rank}</span>
+        <span class="rank-num${medal ? ` top r${r.rank}` : ""}" aria-label="Platz ${r.rank}">${r.rank}</span>
+        ${medal ? `<span class="medal" aria-hidden="true">${medal}</span>` : ""}
         <strong class="name">${escapeHtml(r.board.name)}</strong>
         ${isMe ? `<span class="tag">Du</span>` : ""}
         ${r.lines.length ? `<span class="badge">BINGO ×${r.lines.length}</span>` : ""}
       </header>
-      <p class="meta">${r.hits} Treffer · ${r.filled}/${CELL_COUNT} ausgefüllt</p>
+      <p class="meta">${main} · ${r.filled}/${CELL_COUNT} ausgefüllt</p>
       <div class="progress-bar small"><span style="width:${(r.hits / CELL_COUNT) * 100}%"></span></div>
       ${miniGridHtml(r, drawn)}
     </article>`;
   }).join("");
+  // Nach dem Umschalten der Wertung die Karten in neuer Reihenfolge einblenden
+  if (reorder && !reducedMotion()) {
+    boards.classList.remove("reorder");
+    void boards.offsetWidth;
+    boards.classList.add("reorder");
+    clearTimeout(boards._reorderTimer);
+    boards._reorderTimer = setTimeout(() => boards.classList.remove("reorder"), 1200);
+  }
 }
 
 function renderCalendar() {
   if (!state.boards || !state.dayDocs) return;
   const board = state.guest ? null : me();
   if (!state.guest && !board) return;
-  $("calendar").innerHTML = calendarHtml(state.days, state.boards, { myCells: board ? cellsOf(board) : [] });
+  $("calendar").innerHTML = calendarHtml(state.days, state.boards, {
+    myCells: board ? cellsOf(board) : [], songs: songsView.getDay,
+  });
   $("calendar-note").textContent = board && canAddWords(board) && state.member
     ? "Tippe auf ein Türchen, um die Wörter des Tages zu sehen oder einzutragen."
     : "Tippe auf ein Türchen, um die Wörter des Tages zu sehen.";
@@ -549,6 +587,8 @@ const dayEditor = createDayEditor({
   getBoards: () => state.boards ?? [],
   getDays: () => state.days,
   getMeta: (n) => state.dayDocs?.find((d) => d.id === String(n)) ?? null,
+  getSongs: (n) => songsView.getDay(n),
+  onOpenSongs: (n) => { songsView.showDay(n); tabs?.show("songs"); },
   onSave: async (n, words) => {
     try {
       await setDoc(doc(db, "days", String(n)), {

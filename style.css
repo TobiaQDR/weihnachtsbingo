@@ -373,10 +373,11 @@ code { background: var(--paper-2); padding: 1px 5px; border-radius: 4px; font-si
 
 /* Mini-Felder */
 .grid.mini { gap: 3px; margin-top: 4px; }
-.grid.mini .cell { aspect-ratio: 5 / 4; }
+.grid.mini .cell { aspect-ratio: 1 / 1; }
 .grid.mini .cell {
-  font-size: 0.56rem;
+  font-size: clamp(0.66rem, 2.7vw, 0.85rem);
   font-weight: 700;
+  line-height: 1.1;
   border-radius: 6px;
   padding: 2px;
   cursor: default;
@@ -402,6 +403,69 @@ code { background: var(--paper-2); padding: 1px 5px; border-radius: 4px; font-si
 .board-card.leaving { opacity: 0; transform: scale(0.9); }
 .board-card header, .board-card .ph { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .rank { font-size: 1.2rem; min-width: 1.6em; font-weight: 800; color: var(--muted); }
+
+/* Rangliste */
+.rank-num {
+  flex: none;
+  display: grid;
+  place-items: center;
+  min-width: 40px;
+  height: 40px;
+  padding: 0 6px;
+  border-radius: 12px;
+  background: var(--paper-2);
+  color: var(--muted);
+  font-family: "Mountains of Christmas", Georgia, serif;
+  font-size: 1.6rem;
+  line-height: 1;
+}
+.rank-num.top { color: #fff; box-shadow: inset 0 0 0 2px var(--gold); }
+.rank-num.r1 { background: linear-gradient(160deg, #f4c542, #c98a0c); }
+.rank-num.r2 { background: linear-gradient(160deg, #b9c2cc, #7d8894); }
+.rank-num.r3 { background: linear-gradient(160deg, #d9905a, #9c5a2b); }
+.medal { font-size: 1.3rem; }
+.board-card .meta strong { color: var(--text); }
+.boards.reorder .board-card { animation: pop-in 0.45s var(--spring) both; animation-delay: calc(var(--i, 0) * 50ms); }
+
+.seg {
+  --idx: 0;
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  padding: 4px;
+  margin: 0 0 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+}
+.seg::before {
+  content: "";
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 4px;
+  width: calc(50% - 4px);
+  border-radius: 999px;
+  background: linear-gradient(180deg, #fffdf6, var(--gold-soft));
+  transform: translateX(calc(var(--idx) * 100%));
+  transition: transform 0.4s var(--spring);
+}
+.seg button {
+  position: relative;
+  border: 0;
+  background: none;
+  color: rgba(248, 251, 255, 0.85);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 800;
+  line-height: 1.2;
+  padding: 8px 6px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: color 0.3s;
+  -webkit-tap-highlight-color: transparent;
+}
+.seg button.active { color: var(--red-dark); }
 .name { font-size: 1.1rem; }
 .tag {
   background: var(--gold-soft);
@@ -485,6 +549,19 @@ code { background: var(--paper-2); padding: 1px 5px; border-radius: 4px; font-si
   font-weight: 800;
   color: rgba(255, 255, 255, 0.85);
 }
+.door-songs {
+  position: absolute;
+  bottom: 4px;
+  right: 6px;
+  font-size: 0.62rem;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.85);
+}
+.door.filled .door-songs { color: var(--red-dark); }
+.dd-songs { margin-top: 14px; padding-top: 12px; border-top: 2px dashed var(--border); }
+.dd-songs h3 { margin: 0 0 8px; }
+.dd-songs .song { animation: none; }
+.dd-songs .btn { margin-top: 8px; }
 .door-star {
   position: absolute;
   top: 4px;

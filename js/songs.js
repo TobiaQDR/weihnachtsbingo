@@ -76,8 +76,9 @@ function initialDay(now = new Date()) {
  * @param opts.root     Element, in das gezeichnet wird
  * @param opts.admin    Spielleitung: darf Lieder aus Pool und Tagen entfernen
  * @param opts.getUser  () => { name, canEdit, note } – wer gerade schreibt und ob er darf
+ * @param opts.onChange () => void – nach jedem Update der Lieder (z. B. Kalender neu zeichnen)
  */
-export function createSongsView({ root, admin = false, getUser }) {
+export function createSongsView({ root, admin = false, getUser, onChange = () => {} }) {
   const st = {
     pool: null,          // [{ id, title, addedBy }]
     days: null,          // Map Tag → { picked, random }
@@ -132,10 +133,12 @@ export function createSongsView({ root, admin = false, getUser }) {
         .filter((x) => x.title.trim())
         .sort((a, b) => a.title.localeCompare(b.title, "de"));
       render();
+      onChange();
     }, onError);
     const offDays = onSnapshot(collection(db, "songDays"), (s) => {
       st.days = new Map(s.docs.map((d) => [Number(d.id), songDayOf(d.data())]));
       render();
+      onChange();
     }, onError);
     return () => { offPool(); offDays(); };
   }
@@ -361,5 +364,12 @@ export function createSongsView({ root, admin = false, getUser }) {
     if (await addToPool(input.value)) input.value = "";
   });
 
-  return { start, refresh: render };
+  return {
+    start,
+    refresh: render,
+    /** Lieder eines Abends ({ picked, random }) oder null, solange noch nichts geladen ist. */
+    getDay: (n) => (st.days ? dayOf(n) : null),
+    /** Abend auswählen (z. B. aus dem Kalender heraus). */
+    showDay: (n) => { st.day = n; render(); },
+  };
 }

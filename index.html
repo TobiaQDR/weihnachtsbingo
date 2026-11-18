@@ -102,7 +102,11 @@
 
       <!-- Alle Felder -->
       <section class="view" data-view="all" hidden>
-        <p class="intro-text">So stehen alle Mitspieler gerade da.</p>
+        <p class="intro-text">Rangliste – gewertet nach:</p>
+        <div class="seg" id="rank-mode" role="radiogroup" aria-label="Wertung der Rangliste">
+          <button type="button" data-mode="lines" role="radio">🎉 <span>Bingos &amp; längste Reihe</span></button>
+          <button type="button" data-mode="hits" role="radio">🎯 <span>Meiste Treffer</span></button>
+        </div>
         <div id="boards" class="boards"></div>
       </section>
 

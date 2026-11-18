@@ -108,14 +108,20 @@ Im Reiter **👥 Spieler** hat jeder Spieler eine Karte:
 ## 5. In der Adventszeit
 
 - Im Reiter **📅 Kalender** gibt es 24 Türchen. Tippt man auf eins, sieht man die Wörter des Tages
-  und bei wem sie im Feld stehen.
+  und bei wem sie im Feld stehen. Darunter stehen die Lieder des Abends; 🎶 am Türchen zeigt, wie
+  viele es schon sind.
 - **Alle Spieler** können die Wörter eines Tages eintragen und ändern (sobald das Türchen offen ist,
   also ab dem jeweiligen Dezembertag). Als Spielleitung kannst du jeden Tag bearbeiten.
 - **Mehrere Wörter pro Tag** sind möglich, z. B. „Nikolaus“ und „Weihnachtsmann“. Jedes davon zählt
   als Treffer.
 - Beim Eintippen sieht man schon, bei wem das Wort steht, und auch ähnliche Schreibweisen
   (z. B. „Plätzchen“ vs. „Plätzchen backen“).
-- Im Reiter **👀 Alle Felder** sehen alle Spieler jederzeit die Felder der anderen samt Rangliste.
+- Im Reiter **👀 Alle Felder** sehen alle Spieler jederzeit die Felder der anderen als **Rangliste**,
+  mit dem Platz als Zahl (die ersten drei in Gold, Silber und Bronze). Oben wählt man die Wertung:
+  - **🎉 Bingos & längste Reihe**: zuerst zählen volle Reihen, Spalten und Diagonalen, bei Gleichstand
+    die längste angefangene Reihe (z. B. 4 von 5), dann die Treffer.
+  - **🎯 Meiste Treffer**: zuerst zählen die Treffer, dann die Bingos.
+  Wer in allem gleichauf ist, teilt sich den Platz.
 - Volle Reihen, Spalten oder Diagonalen werden rot-golden markiert, und es gibt Konfetti und „BINGO!“.
 
 ### Weihnachtslieder
