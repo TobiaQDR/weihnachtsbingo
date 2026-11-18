@@ -12,7 +12,7 @@ import {
   ranking, randomId, escapeHtml,
 } from "./bingo.js";
 import {
-  $, toast, initTabs, startSnow, miniGridHtml, calendarHtml, createDayEditor,
+  $, toast, initTabs, startSnow, miniGridHtml, calendarHtml, createDayEditor, openOverlay, closeOverlay,
 } from "./ui.js";
 import { createSongsView, addDefaultSongs } from "./songs.js";
 
@@ -393,6 +393,64 @@ $("calendar").addEventListener("click", (e) => {
   const door = e.target.closest("[data-day]");
   if (door) dayEditor.open(Number(door.dataset.day), { canEdit: true });
 });
+
+// ---------- Spiel zurücksetzen ----------
+
+function closeReset() {
+  closeOverlay($("reset-dialog"));
+}
+
+$("reset-open").addEventListener("click", () => {
+  $("reset-confirm").value = "";
+  $("reset-words").checked = false;
+  $("reset-msg").textContent = "";
+  openOverlay($("reset-dialog"));
+  $("reset-confirm").focus();
+});
+$("reset-cancel").addEventListener("click", closeReset);
+$("reset-dialog").addEventListener("click", (e) => { if (e.target === $("reset-dialog")) closeReset(); });
+
+$("reset-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if ($("reset-confirm").value.trim().toUpperCase() !== "RESET") {
+    $("reset-msg").textContent = "Bitte RESET eintippen.";
+    return;
+  }
+  $("reset-go").disabled = true;
+  $("reset-msg").textContent = "Wird zurückgesetzt …";
+  try {
+    const n = await resetGame($("reset-words").checked);
+    closeReset();
+    toast(`🗑️ Spiel zurückgesetzt (${n} Einträge gelöscht).`, 5000);
+  } catch (err) {
+    console.error(err);
+    $("reset-msg").textContent = "Zurücksetzen hat nicht (ganz) geklappt: " + err.message;
+  } finally {
+    $("reset-go").disabled = false;
+  }
+});
+
+/**
+ * Löscht Spieler, Felder, Verknüpfungen der Geräte, PIN-Anmeldungen und die Lieder der Abende
+ * (auf Wunsch auch die Tageswörter) und entsperrt die Felder. Liederpool und Einladung bleiben.
+ */
+async function resetGame(clearWords) {
+  const collections = ["players", "boards", "members", "logins", "songDays", ...(clearWords ? ["days"] : [])];
+  const refs = [];
+  for (const name of collections) {
+    const snap = await getDocs(collection(db, name));
+    refs.push(...snap.docs.map((d) => d.ref));
+  }
+  // Ein Batch darf höchstens 500 Schreibvorgänge enthalten
+  for (let i = 0; i < refs.length; i += 450) {
+    const batch = writeBatch(db);
+    for (const ref of refs.slice(i, i + 450)) batch.delete(ref);
+    await batch.commit();
+  }
+  await updateDoc(doc(db, "game", "settings"), { locked: false });
+  state.openGrids.clear();
+  return refs.length;
+}
 
 // ---------- Lieder ----------
 

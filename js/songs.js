@@ -6,7 +6,7 @@
 //                                                       random: [title] zufällig aufgefüllt
 
 import {
-  doc, collection, onSnapshot, setDoc, deleteDoc, runTransaction, serverTimestamp,
+  doc, collection, onSnapshot, setDoc, deleteDoc, runTransaction, writeBatch, serverTimestamp,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { db } from "./firebase.js";
 import {
@@ -89,6 +89,9 @@ export function createSongsView({ root, admin = false, getUser, onChange = () =>
 
   root.innerHTML = `
     <p class="intro-text">Jeden Abend singen wir bis zu ${SONGS_PER_DAY} Weihnachtslieder 🎶</p>
+    ${admin ? `<div class="center fill-all-row">
+      <button type="button" class="btn" data-fill-all>🎲 Alle Abende zufällig auffüllen</button>
+    </div>` : ""}
     <section class="card songs-card">
       <div class="song-days" data-days></div>
       <div class="dd-head">
@@ -224,6 +227,44 @@ export function createSongsView({ root, admin = false, getUser, onChange = () =>
     }), `„${title}“ entfernt.`);
   }
 
+  /** Spielleitung: an allen 24 Abenden die freien Plätze mit Zufallsliedern füllen. */
+  async function fillAllDays() {
+    if (st.busy || !st.pool || !st.days) return;
+    if (!confirm("Für alle 24 Abende die freien Plätze mit Zufallsliedern auffüllen?\nSchon eingetragene Lieder bleiben stehen.")) return;
+    const pool = poolTitles();
+    // Wie oft jedes Lied schon vorkommt – so verteilen sich die Lieder gleichmäßig auf die Abende
+    const used = usedElsewhere(0);
+    const batch = writeBatch(db);
+    let changed = 0;
+    for (const n of dayNumbers()) {
+      const cur = dayOf(n);
+      const free = SONGS_PER_DAY - cur.picked.length - cur.random.length;
+      if (free <= 0) continue;
+      const add = pickRandomSongs(pool, free, {
+        exclude: [...cur.picked.map((p) => p.title), ...cur.random], usedCount: used,
+      });
+      if (!add.length) continue;
+      for (const t of add) used.set(songId(t), (used.get(songId(t)) ?? 0) + 1);
+      batch.set(doc(db, "songDays", String(n)), {
+        picked: cur.picked, random: [...cur.random, ...add], updatedAt: serverTimestamp(),
+      });
+      changed++;
+    }
+    if (!changed) return toast("Alle Abende sind schon voll.");
+    st.busy = true;
+    render();
+    try {
+      await batch.commit();
+      toast(`🎲 ${changed} ${changed === 1 ? "Abend" : "Abende"} aufgefüllt.`);
+    } catch (err) {
+      console.error(err);
+      toast("Auffüllen hat nicht geklappt: " + err.message, 6000);
+    } finally {
+      st.busy = false;
+      render();
+    }
+  }
+
   async function addToPool(raw) {
     const title = cleanSong(raw);
     const id = songId(title);
@@ -323,6 +364,9 @@ export function createSongsView({ root, admin = false, getUser, onChange = () =>
       rnd.textContent = random.length ? "🎲 Zufallslieder neu würfeln" : "🎲 Mit Zufallsliedern auffüllen";
     }
 
+    const fillAll = q("[data-fill-all]");
+    if (fillAll) fillAll.disabled = st.busy;
+
     // Pool
     q("[data-count]").textContent = st.pool.length;
     q("[data-pool-form]").hidden = !u.canEdit;
@@ -351,6 +395,8 @@ export function createSongsView({ root, admin = false, getUser, onChange = () =>
       addToDay(song.title);
     } else if (b.hasAttribute("data-random")) {
       fillRandom();
+    } else if (b.hasAttribute("data-fill-all")) {
+      fillAllDays();
     } else if (b.dataset.remove) {
       if (confirm(`„${b.dataset.title}“ von diesem Abend entfernen?`)) removeFromDay(b.dataset.remove, b.dataset.title);
     } else if (b.dataset.unpool) {

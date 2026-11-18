@@ -109,7 +109,8 @@ service cloud.firestore {
 
     // Ein Browser weist sich als Spieler aus, indem er den geheimen Code kennt.
     match /members/{uid} {
-      allow read: if request.auth != null && request.auth.uid == uid;
+      // Der Spielleiter darf alle auflisten (zum Zurücksetzen des Spiels)
+      allow read: if isAdmin() || (request.auth != null && request.auth.uid == uid);
       allow delete: if isAdmin() || (request.auth != null && request.auth.uid == uid);
       allow create, update: if request.auth != null && request.auth.uid == uid
         && request.resource.data.keys().hasOnly(['code', 'boardId'])

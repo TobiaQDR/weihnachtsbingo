@@ -912,6 +912,15 @@ input:focus { outline: none; border-color: var(--gold-deep); box-shadow: 0 0 0 4
 }
 .chip-x:hover { color: var(--red); }
 
+.fill-all-row { margin: 0 0 4px; }
+
+/* Spiel zurücksetzen */
+.danger-card { margin-top: 28px; box-shadow: 0 0 0 2px rgba(192, 38, 45, 0.25), var(--shadow); }
+.btn.danger-fill { background: linear-gradient(180deg, #d4363d, var(--red-dark)); border-color: var(--red-dark); color: #fff; }
+.reset-list { margin: 0 0 8px; padding-left: 20px; }
+.check { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.check input { width: 22px; height: 22px; margin: 0; accent-color: var(--red); flex: none; }
+
 /* ---------- Toast ---------- */
 
 .toast {

@@ -71,6 +71,12 @@
           </label>
         </section>
         <div id="players" class="boards"></div>
+
+        <section class="card danger-card">
+          <h2>Spiel zurücksetzen</h2>
+          <p class="muted">Entfernt alle Spieler mit ihren Feldern und die Lieder aller Abende. Der Liederpool und der Einladungslink bleiben.</p>
+          <button type="button" class="btn ghost danger block" id="reset-open">🗑️ Spiel zurücksetzen …</button>
+        </section>
       </section>
 
       <!-- Kalender -->
@@ -85,6 +91,32 @@
       <p class="center"><button type="button" id="logout" class="btn ghost light">Abmelden</button></p>
     </div>
   </main>
+
+  <!-- Spiel zurücksetzen -->
+  <div id="reset-dialog" class="overlay" hidden>
+    <form id="reset-form" class="dialog" autocomplete="off" role="dialog" aria-modal="true" aria-labelledby="reset-title">
+      <h2 id="reset-title">Spiel zurücksetzen?</h2>
+      <p>Das wird gelöscht:</p>
+      <ul class="reset-list">
+        <li>alle Spieler, ihre Felder, persönlichen Links und PINs</li>
+        <li>die Lieder aller Abende</li>
+      </ul>
+      <label class="check">
+        <input type="checkbox" id="reset-words">
+        <span>Auch die Wörter im Kalender löschen</span>
+      </label>
+      <p class="muted">Bleibt erhalten: Liederpool und Einladungslink. Die Felder werden entsperrt.
+        <strong>Das lässt sich nicht rückgängig machen.</strong></p>
+      <label>Zum Bestätigen <strong>RESET</strong> eintippen
+        <input id="reset-confirm" type="text" autocapitalize="characters" enterkeyhint="done">
+      </label>
+      <p id="reset-msg" class="msg"></p>
+      <div class="buttons">
+        <button type="button" id="reset-cancel" class="btn ghost">Abbrechen</button>
+        <button type="submit" id="reset-go" class="btn primary danger-fill">Endgültig zurücksetzen</button>
+      </div>
+    </form>
+  </div>
 
   <div id="toast" class="toast" role="status"></div>
 

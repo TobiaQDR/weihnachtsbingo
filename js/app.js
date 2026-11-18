@@ -86,6 +86,20 @@ if (!configured) {
   showError("Bitte öffne den Link, den du für das Weihnachtsbingo bekommen hast.");
 }
 
+/**
+ * Spieler gibt es nicht mehr (entfernt oder Spiel zurückgesetzt): Wenn der Einladungslink
+ * gemerkt ist, dorthin wechseln, damit man neu beitreten kann.
+ */
+function goToInvite() {
+  const saved = storageGet("bingoEinladung");
+  if (!saved) return false;
+  const url = new URL(location.href);
+  url.search = new URLSearchParams({ einladung: saved }).toString();
+  url.hash = "";
+  location.replace(url.toString());
+  return true;
+}
+
 /** Persönlicher Link dieses Spielers (führt direkt ins eigene Feld). */
 function personalLink() {
   const url = new URL(location.href);
@@ -103,6 +117,7 @@ async function start() {
       showJoin();
       return;
     }
+    if (goToInvite()) return;
     showError("Diesen Spieler gibt es nicht (mehr). Vielleicht wurdest du aus dem Spiel entfernt – frag bitte beim Spielleiter nach.");
     return;
   }
@@ -418,6 +433,7 @@ function render() {
   const board = state.guest ? null : me();
   if (!state.guest && !board) {
     forgetCode();
+    if (goToInvite()) return;
     showError("Du bist nicht mehr im Spiel, die Spielleitung hat dich entfernt. Bitte frag dort nach.");
     return;
   }

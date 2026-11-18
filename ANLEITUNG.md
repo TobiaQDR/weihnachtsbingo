@@ -140,6 +140,17 @@ Im Reiter **🎶 Lieder** wird für jeden Abend (1. bis 24. Dezember) festgelegt
 - **Als Spielleitung** kannst du mit **✕** Lieder aus dem Pool und von einzelnen Abenden entfernen,
   auch die von Spielern ausgesuchten.
 - Gäste sehen die Lieder nur an. Lieder kann man auch schon für spätere Abende aussuchen.
+- **🎲 Alle Abende zufällig auffüllen** (nur Spielleitung, oben im Reiter): füllt an allen 24 Abenden
+  die freien Plätze mit Zufallsliedern. Schon eingetragene Lieder bleiben stehen, und die Lieder
+  verteilen sich möglichst gleichmäßig über die Abende.
+
+### Spiel zurücksetzen
+
+Ganz unten im Reiter **👥 Spieler** gibt es **„Spiel zurücksetzen“** (z. B. für einen Probelauf oder das
+nächste Jahr). Nach Eintippen von `RESET` werden alle Spieler mit ihren Feldern, Links und PINs sowie
+die Lieder aller Abende gelöscht. Auf Wunsch (Häkchen) auch die Wörter im Kalender. Liederpool und
+Einladungslink bleiben, die Felder werden entsperrt. Danach können alle über den Einladungslink neu
+beitreten. **Das lässt sich nicht rückgängig machen.**
 
 ## Tipps für die Mitspieler
 
@@ -157,6 +168,12 @@ Der kostenlose Firebase-Tarif „Spark“ erlaubt 50.000 Lesevorgänge und 20.00
 Eine Familie braucht davon nur einen Bruchteil. Es ist keine Kreditkarte nötig, also können keine Kosten entstehen.
 
 ## Update auf die neue Version
+
+### Update „Spiel zurücksetzen“
+
+1. Den Inhalt von `firestore.rules` in Firebase unter **Firestore Database → Regeln** einfügen und
+   **Veröffentlichen** (sonst klappt das Zurücksetzen nicht).
+2. Alle Dateien wieder bei GitHub hochladen.
 
 ### Update „Weihnachtslieder“
 
