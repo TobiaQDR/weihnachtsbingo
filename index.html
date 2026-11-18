@@ -27,6 +27,15 @@
 
     <div id="error" class="card center error" hidden></div>
 
+    <!-- Beitreten über den Einladungslink -->
+    <form id="join" class="card pop-in" autocomplete="off" hidden>
+      <h2>Mitspielen 🎄</h2>
+      <p class="muted">Du wurdest zum Weihnachtsbingo eingeladen! Wie heißt du? Unter diesem Namen sehen dich die anderen.</p>
+      <input id="join-name" type="text" maxlength="30" placeholder="Dein Name, z. B. Oma" required aria-label="Name" enterkeyhint="go">
+      <p id="join-msg" class="msg"></p>
+      <button type="submit" id="join-btn" class="btn primary block">Beitreten</button>
+    </form>
+
     <div id="game" hidden>
       <nav class="tabs" id="tabs" role="tablist">
         <button type="button" data-tab="mine" role="tab">🎄 <span>Mein Feld</span></button>
@@ -44,6 +53,7 @@
           <div class="progress-bar"><span id="progress-fill"></span></div>
           <p id="progress" class="progress"></p>
         </div>
+        <p class="center"><button type="button" id="my-link" class="btn ghost light">🔗 Meinen Link kopieren</button></p>
       </section>
 
       <!-- Alle Felder -->

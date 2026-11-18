@@ -8,8 +8,8 @@ import {
 import { app, db, configured } from "./firebase.js";
 import { ADMIN_UID } from "./firebase-config.js";
 import {
-  CELL_COUNT, SEASON_YEAR, normalize, emptyCells, cellsOf, canAddWords, daysMap, drawnMap,
-  ranking, makePlayerCode, randomId, escapeHtml,
+  CELL_COUNT, SEASON_YEAR, normalize, cellsOf, canAddWords, daysMap, drawnMap,
+  ranking, randomId, escapeHtml,
 } from "./bingo.js";
 import {
   $, toast, initTabs, startSnow, miniGridHtml, calendarHtml, createDayEditor,
@@ -17,6 +17,7 @@ import {
 
 const state = {
   settings: {},
+  invite: null,    // { code, open }: geheimer Einladungscode
   players: null,   // geheime Link-Dokumente: { id: code, name, boardId }
   boards: null,    // öffentliche Felder
   dayDocs: [],
@@ -79,9 +80,12 @@ if (!configured) {
 
 async function startAdmin() {
   const settingsRef = doc(db, "game", "settings");
+  const inviteRef = doc(db, "game", "invite");
   try {
     const snap = await getDoc(settingsRef);
     if (!snap.exists()) await setDoc(settingsRef, { locked: false });
+    const inv = await getDoc(inviteRef);
+    if (!inv.exists()) await setDoc(inviteRef, { code: randomId(16), open: true });
   } catch (err) {
     return loadError(err);
   }
@@ -91,6 +95,10 @@ async function startAdmin() {
       state.settings = snap.data() ?? {};
       renderSettings();
       maybeMigrate();
+    }, loadError),
+    onSnapshot(inviteRef, (snap) => {
+      state.invite = snap.data() ?? null;
+      renderInvite();
     }, loadError),
     onSnapshot(collection(db, "players"), (snap) => {
       state.players = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
@@ -191,6 +199,38 @@ $("lock-toggle").addEventListener("change", (e) => {
     .then((ok) => { if (!ok) renderSettings(); });
 });
 
+// ---------- Einladungslink ----------
+
+function inviteLink() {
+  const url = new URL("index.html", location.href);
+  url.search = new URLSearchParams({ einladung: state.invite.code }).toString();
+  return url.toString();
+}
+
+function renderInvite() {
+  if (!state.invite) return;
+  const link = inviteLink();
+  $("invite-link").value = link;
+  $("invite-open").checked = state.invite.open === true;
+  $("invite-wa").href = "https://wa.me/?text=" + encodeURIComponent(
+    `🎄 Macht mit beim Weihnachtsbingo! Über diesen Link könnt ihr euch selbst eintragen:\n${link}`);
+}
+
+$("invite-copy").addEventListener("click", () => { if (state.invite) copy(inviteLink()); });
+$("invite-link").addEventListener("focus", (e) => e.target.select());
+
+$("invite-open").addEventListener("change", (e) => {
+  const open = e.target.checked;
+  save(updateDoc(doc(db, "game", "invite"), { open }),
+    open ? "✅ Neue Spieler können beitreten." : "⛔ Beitritt geschlossen.")
+    .then((ok) => { if (!ok) renderInvite(); });
+});
+
+$("invite-renew").addEventListener("click", () => {
+  if (!confirm("Neuen Einladungslink erzeugen? Der alte Link funktioniert dann nicht mehr. Wer schon mitspielt, bleibt dabei.")) return;
+  save(updateDoc(doc(db, "game", "invite"), { code: randomId(16) }), "🔗 Neuer Einladungslink erzeugt.");
+});
+
 // ---------- Spieler ----------
 
 function playerLink(code) {
@@ -198,20 +238,6 @@ function playerLink(code) {
   url.search = new URLSearchParams({ spieler: code }).toString();
   return url.toString();
 }
-
-$("player-form").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const name = $("player-name").value.replace(/\s+/g, " ").trim();
-  if (!name) return;
-  if ((state.boards ?? []).some((b) => normalize(b.name) === normalize(name))
-      && !confirm(`Es gibt schon einen Spieler „${name}“. Trotzdem anlegen?`)) return;
-  const code = makePlayerCode(name);
-  const boardId = randomId();
-  const batch = writeBatch(db);
-  batch.set(doc(db, "boards", boardId), { name, cells: emptyCells(), canAddWords: true });
-  batch.set(doc(db, "players", code), { name, boardId });
-  if (await save(batch.commit(), `🎄 ${name} angelegt.`)) $("player-name").value = "";
-});
 
 function renderAll() {
   renderPlayers();
@@ -228,7 +254,7 @@ function renderPlayers() {
   const rows = ranking(state.boards, drawn).filter((r) => codeOf.has(r.board.id));
 
   if (rows.length === 0) {
-    container.innerHTML = `<p class="intro-text">Noch keine Spieler angelegt.</p>`;
+    container.innerHTML = `<p class="intro-text">Noch niemand beigetreten. Schick den Einladungslink herum!</p>`;
     return;
   }
   container.querySelector(".intro-text")?.remove();
@@ -254,7 +280,7 @@ function renderPlayers() {
           <button type="button" class="btn small" data-copy>🔗 Link kopieren</button>
           <a class="btn small" data-wa target="_blank" rel="noopener">💬 WhatsApp</a>
           <button type="button" class="btn small ghost" data-toggle="${escapeHtml(id)}">Feld ansehen</button>
-          <button type="button" class="btn small ghost danger" data-del="${escapeHtml(id)}">Löschen</button>
+          <button type="button" class="btn small ghost danger" data-del="${escapeHtml(id)}">Entfernen</button>
         </div>
         <div class="collapse"><div class="collapse-inner"></div></div>`;
     }
@@ -304,13 +330,14 @@ $("players").addEventListener("click", async (e) => {
   } else if (t.dataset.del) {
     const b = state.boards.find((x) => x.id === t.dataset.del);
     const p = state.players.find((x) => x.boardId === t.dataset.del);
-    if (!b || !p || !confirm(`${b.name} mit dem ganzen Feld wirklich löschen?`)) return;
+    if (!b || !p || !confirm(`${b.name} wirklich aus dem Spiel entfernen? Das Feld wird dabei gelöscht.`)) return;
     const card = t.closest(".board-card");
     card.classList.add("leaving");
     const batch = writeBatch(db);
     batch.delete(doc(db, "boards", b.id));
     batch.delete(doc(db, "players", p.id));
-    if (!(await save(batch.commit(), `${b.name} gelöscht.`))) card.classList.remove("leaving");
+    if (p.uid) batch.delete(doc(db, "members", p.uid));
+    if (!(await save(batch.commit(), `${b.name} entfernt.`))) card.classList.remove("leaving");
   }
 });
 

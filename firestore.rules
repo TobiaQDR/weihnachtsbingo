@@ -6,7 +6,8 @@ rules_version = '2';
 //
 // Aufbau:
 //   game/settings     { locked }                    Sperre der Felder
-//   players/{code}    { name, boardId }             geheimer Spieler-Link (nur per Code abrufbar)
+//   game/invite       { code, open }                geheimer Einladungscode (nur Spielleiter liest ihn)
+//   players/{code}    { name, boardId, uid?, invite? } geheimer Spieler-Link (nur per Code abrufbar)
 //   boards/{boardId}  { name, cells, canAddWords }  öffentliches Bingo-Feld, alle dürfen es sehen
 //   members/{uid}     { code, boardId }             verknüpft einen (anonym angemeldeten) Browser mit einem Spieler
 //   days/{1..24}      { words, updatedBy, updatedAt } Wörter des Adventskalenders
@@ -26,6 +27,16 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/members/$(request.auth.uid)).data.boardId;
     }
 
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // Beitritt per Einladungslink: Code muss stimmen und Beitritt muss offen sein
+    function validInvite(inviteCode) {
+      let inv = get(/databases/$(database)/documents/game/invite).data;
+      return inviteCode is string && inv.get('open', false) == true && inv.code == inviteCode;
+    }
+
     function fieldsLocked() {
       return get(/databases/$(database)/documents/game/settings).data.get('locked', false) == true;
     }
@@ -36,18 +47,46 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // Einladungscode: nur Spielleiter (die Regeln selbst dürfen ihn trotzdem prüfen)
+    match /game/invite {
+      allow read, write: if isAdmin();
+    }
+
     // Geheime Spieler-Links: Wer den Code kennt, darf genau dieses Dokument lesen.
     // Auflisten (und damit alle Codes sehen) darf nur der Spielleiter.
     match /players/{code} {
       allow get: if true;
-      allow list, write: if isAdmin();
+      allow list, update, delete: if isAdmin();
+      // Selbst beitreten: zusammen mit Feld und members-Eintrag in einem Rutsch anlegen
+      allow create: if isAdmin() || (
+        signedIn()
+        && code.matches('^[a-z0-9-]{4,64}$')
+        && request.resource.data.keys().hasOnly(['name', 'boardId', 'uid', 'invite'])
+        && request.resource.data.uid == request.auth.uid
+        && validInvite(request.resource.data.invite)
+        && getAfter(/databases/$(database)/documents/boards/$(request.resource.data.boardId)).data.name == request.resource.data.name
+        && getAfter(/databases/$(database)/documents/members/$(request.auth.uid)).data.code == code
+      );
     }
 
     // Öffentliche Felder: alle sehen alle. Ein Spieler darf nur die 25 Wörter
     // seines eigenen Feldes ändern, und das nur, solange nicht gesperrt ist.
     match /boards/{boardId} {
       allow read: if true;
-      allow create, delete: if isAdmin();
+      allow delete: if isAdmin();
+      // Neues, leeres Feld beim Beitritt (der Spieler-Eintrag prüft den Einladungscode).
+      // Wer neu beitritt, darf erst einmal Tageswörter eintragen.
+      allow create: if isAdmin() || (
+        signedIn()
+        && request.resource.data.keys().hasOnly(['name', 'cells', 'canAddWords'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() >= 1
+        && request.resource.data.name.size() <= 30
+        && request.resource.data.canAddWords == true
+        && request.resource.data.cells == ['', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+        && getAfter(/databases/$(database)/documents/members/$(request.auth.uid)).data.boardId == boardId
+        && getAfter(/databases/$(database)/documents/players/$(getAfter(/databases/$(database)/documents/members/$(request.auth.uid)).data.code)).data.boardId == boardId
+      );
       allow update: if isAdmin() || (
         isMember()
         && myBoardId() == boardId
@@ -60,12 +99,13 @@ service cloud.firestore {
 
     // Ein Browser weist sich als Spieler aus, indem er den geheimen Code kennt.
     match /members/{uid} {
-      allow read, delete: if request.auth != null && request.auth.uid == uid;
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow delete: if isAdmin() || (request.auth != null && request.auth.uid == uid);
       allow create, update: if request.auth != null && request.auth.uid == uid
         && request.resource.data.keys().hasOnly(['code', 'boardId'])
         && request.resource.data.code is string
         && request.resource.data.code.matches('^[a-z0-9-]{4,64}$')
-        && get(/databases/$(database)/documents/players/$(request.resource.data.code)).data.boardId == request.resource.data.boardId;
+        && getAfter(/databases/$(database)/documents/players/$(request.resource.data.code)).data.boardId == request.resource.data.boardId;
     }
 
     // Adventskalender: alle lesen. Spielleiter darf alles, Spieler mit Berechtigung

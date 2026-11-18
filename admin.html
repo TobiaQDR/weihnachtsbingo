@@ -56,11 +56,18 @@
       <!-- Spieler -->
       <section class="view" data-view="players" hidden>
         <section class="card">
-          <h2>Neuer Spieler</h2>
-          <form id="player-form" class="row" autocomplete="off">
-            <input id="player-name" type="text" maxlength="30" placeholder="Name, z. B. Oma" required aria-label="Name">
-            <button type="submit" class="btn primary">Hinzufügen</button>
-          </form>
+          <h2>Einladungslink</h2>
+          <p class="muted">Wer diesen Link öffnet, kann sich selbst als Spieler eintragen. Du kannst ihn einfach in die Familiengruppe schicken.</p>
+          <input id="invite-link" type="text" readonly aria-label="Einladungslink" value="Wird geladen …">
+          <div class="row wrap-row actions">
+            <button type="button" class="btn small" id="invite-copy">🔗 Link kopieren</button>
+            <a class="btn small" id="invite-wa" target="_blank" rel="noopener">💬 WhatsApp</a>
+            <button type="button" class="btn small ghost danger" id="invite-renew">Neuen Link erzeugen</button>
+          </div>
+          <label class="perm">
+            <span>Neue Spieler dürfen beitreten</span>
+            <span class="switch"><input type="checkbox" id="invite-open"><span></span></span>
+          </label>
         </section>
         <div id="players" class="boards"></div>
       </section>

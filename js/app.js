@@ -1,5 +1,5 @@
 import {
-  doc, collection, onSnapshot, getDoc, setDoc, updateDoc, serverTimestamp,
+  doc, collection, onSnapshot, getDoc, getDocs, setDoc, updateDoc, writeBatch, serverTimestamp,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import {
   getAuth, signInAnonymously, onAuthStateChanged,
@@ -7,7 +7,7 @@ import {
 import { app, db, configured } from "./firebase.js";
 import {
   CELL_COUNT, normalize, cleanWord, cellsOf, canAddWords, daysMap, drawnMap, scoreBoard, ranking,
-  isDayOpen, escapeHtml,
+  isDayOpen, escapeHtml, emptyCells, makePlayerCode, randomId,
 } from "./bingo.js";
 import {
   $, toast, initTabs, startSnow, confetti, openOverlay, closeOverlay, miniGridHtml,
@@ -28,6 +28,10 @@ const state = {
 
 // ---------- Start ----------
 
+const MAX_NAME_LENGTH = 30;
+/** Geheimer Code aus dem Einladungslink (index.html?einladung=…), mit dem man selbst beitritt. */
+const invite = new URLSearchParams(location.search).get("einladung");
+
 function getCode() {
   const fromUrl = new URLSearchParams(location.search).get("spieler");
   if (fromUrl) storageSet("bingoCode", fromUrl);
@@ -40,6 +44,7 @@ function forgetCode() {
 
 function showError(text) {
   $("loading").hidden = true;
+  $("join").hidden = true;
   $("game").hidden = true;
   $("error").hidden = false;
   $("error").textContent = text;
@@ -50,18 +55,37 @@ state.code = getCode();
 
 if (!configured) {
   showError("Das Spiel ist noch nicht eingerichtet (Firebase-Daten fehlen in js/firebase-config.js).");
-} else if (!state.code) {
-  showError("Bitte öffne den persönlichen Link, den du für das Weihnachtsbingo bekommen hast.");
-} else {
+} else if (state.code) {
   start().catch(onLoadError);
+} else if (invite) {
+  showJoin();
+} else {
+  showError("Bitte öffne den Link, den du für das Weihnachtsbingo bekommen hast.");
+}
+
+/** Persönlicher Link dieses Spielers (damit kommt man auch auf anderen Geräten ins eigene Feld). */
+function personalLink() {
+  const url = new URL(location.href);
+  url.search = new URLSearchParams({ spieler: state.code }).toString();
+  url.hash = "";
+  return url.toString();
 }
 
 async function start() {
   const snap = await getDoc(doc(db, "players", state.code));
   if (!snap.exists()) {
     forgetCode();
-    showError("Diesen Spieler-Link gibt es nicht (mehr). Bitte frag beim Spielleiter nach deinem Link.");
+    state.code = null;
+    if (invite) {
+      showJoin();
+      return;
+    }
+    showError("Diesen Spieler-Link gibt es nicht (mehr). Vielleicht wurdest du aus dem Spiel entfernt – frag bitte beim Spielleiter nach.");
     return;
+  }
+  // Adresszeile auf den persönlichen Link umstellen, damit ein Lesezeichen immer ins eigene Feld führt
+  if (new URLSearchParams(location.search).get("spieler") !== state.code) {
+    history.replaceState(null, "", personalLink());
   }
   state.boardId = snap.data().boardId;
   if (!state.boardId) {
@@ -91,14 +115,19 @@ async function start() {
   joinGame();
 }
 
-/** Anonym anmelden und diesen Browser mit dem Spieler verknüpfen (nötig zum Schreiben). */
+/** Angemeldeten Nutzer holen, notfalls im Hintergrund anonym anmelden. */
+async function ensureUser() {
+  const auth = getAuth(app);
+  await (typeof auth.authStateReady === "function"
+    ? auth.authStateReady()
+    : new Promise((resolve) => { const off = onAuthStateChanged(auth, () => { off(); resolve(); }); }));
+  return auth.currentUser ?? (await signInAnonymously(auth)).user;
+}
+
+/** Diesen Browser mit dem Spieler verknüpfen (nötig zum Schreiben). */
 async function joinGame() {
   try {
-    const auth = getAuth(app);
-    await (typeof auth.authStateReady === "function"
-      ? auth.authStateReady()
-      : new Promise((resolve) => { const off = onAuthStateChanged(auth, () => { off(); resolve(); }); }));
-    const user = auth.currentUser ?? (await signInAnonymously(auth)).user;
+    const user = await ensureUser();
     const ref = doc(db, "members", user.uid);
     const m = await getDoc(ref);
     if (!m.exists() || m.data().code !== state.code || m.data().boardId !== state.boardId) {
@@ -112,6 +141,63 @@ async function joinGame() {
   }
   render();
 }
+
+// ---------- Selbst beitreten ----------
+
+function showJoin() {
+  $("loading").hidden = true;
+  $("error").hidden = true;
+  $("join").hidden = false;
+  $("join-name").focus();
+}
+
+$("join").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const name = $("join-name").value.replace(/\s+/g, " ").trim().slice(0, MAX_NAME_LENGTH);
+  if (!name) return;
+  $("join-msg").textContent = "";
+  $("join-btn").disabled = true;
+  let code;
+  try {
+    const boards = await getDocs(collection(db, "boards"));
+    if (boards.docs.some((d) => normalize(d.data().name) === normalize(name))) {
+      $("join-msg").textContent = `„${name}“ spielt schon mit. Nimm bitte einen anderen Namen, z. B. mit Nachnamen.`;
+      return;
+    }
+    const user = await ensureUser();
+    code = makePlayerCode(name);
+    const boardId = randomId();
+    // Feld, geheimer Spieler-Link und Verknüpfung mit diesem Browser in einem Rutsch
+    const batch = writeBatch(db);
+    batch.set(doc(db, "boards", boardId), { name, cells: emptyCells(), canAddWords: true });
+    batch.set(doc(db, "players", code), { name, boardId, uid: user.uid, invite });
+    batch.set(doc(db, "members", user.uid), { code, boardId });
+    await batch.commit();
+  } catch (err) {
+    console.error(err);
+    $("join-msg").textContent = "Beitreten hat nicht geklappt. Vielleicht ist der Einladungslink nicht mehr gültig – frag bitte beim Spielleiter nach.";
+    return;
+  } finally {
+    $("join-btn").disabled = false;
+  }
+
+  storageSet("bingoCode", code);
+  state.code = code;
+  $("join").hidden = true;
+  $("loading").hidden = false;
+  toast(`Willkommen, ${name}! 🎉 Speichere dir diese Seite als Lesezeichen.`, 6000);
+  start().catch(onLoadError);
+});
+
+$("my-link").addEventListener("click", async () => {
+  const link = personalLink();
+  try {
+    await navigator.clipboard.writeText(link);
+    toast("🔗 Dein Link ist kopiert. Damit kommst du auch auf anderen Geräten in dein Feld – nicht weitergeben!", 6000);
+  } catch {
+    prompt("Dein persönlicher Link (nicht weitergeben):", link);
+  }
+});
 
 function onLoadError(err) {
   console.error(err);
@@ -130,7 +216,8 @@ function render() {
   if (!state.boards || !state.dayDocs || !state.settings) return;
   const board = me();
   if (!board) {
-    showError("Dein Feld wurde gelöscht. Bitte frag beim Spielleiter nach.");
+    forgetCode();
+    showError("Du bist nicht mehr im Spiel, die Spielleitung hat dich entfernt. Bitte frag dort nach.");
     return;
   }
 

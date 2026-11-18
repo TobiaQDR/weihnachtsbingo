@@ -9,8 +9,8 @@ Einmalig ca. 20–30 Minuten. Kostet nichts. Du brauchst ein Google-Konto (für 
 
 | Datei | Wofür |
 |---|---|
-| `index.html` | Seite für die Spieler (jeder bekommt einen persönlichen Link) |
-| `admin.html` | Seite für dich als Spielleiter: Spieler anlegen, Felder sperren, Rechte vergeben, Kalender pflegen |
+| `index.html` | Seite für die Spieler (Beitritt über den Einladungslink, danach hat jeder seinen persönlichen Link) |
+| `admin.html` | Seite für dich als Spielleiter: Einladungslink verschicken, Felder sperren, Rechte vergeben, Spieler entfernen, Kalender pflegen |
 | `js/firebase-config.js` | **Hier trägst du deine Firebase-Daten ein** |
 | `firestore.rules` | Sicherheitsregeln, werden in Firebase eingefügt |
 
@@ -39,9 +39,10 @@ Einmalig ca. 20–30 Minuten. Kostet nichts. Du brauchst ein Google-Konto (für 
    in Firebase unter **Firestore Database → Regeln**. Danach auf **Veröffentlichen** klicken.
 
 > Die Werte in `firebase-config.js` sind nicht geheim, sie stehen später sowieso öffentlich in der Webseite.
-> Geschützt wird alles durch die Regeln: Nur du kannst sperren und Rechte vergeben. Ein Spieler kann
-> nur sein eigenes Feld ändern, und auch das nur, solange die Felder nicht gesperrt sind. Die Felder aller
-> Spieler kann jeder sehen, die persönlichen Links aber nicht.
+> Geschützt wird alles durch die Regeln: Nur du kannst sperren, Rechte vergeben und Spieler entfernen.
+> Mitspielen kann nur, wer den Einladungslink hat. Ein Spieler kann nur sein eigenes Feld ändern, und auch
+> das nur, solange die Felder nicht gesperrt sind. Die Felder aller Spieler kann jeder sehen, die
+> persönlichen Links aber nicht.
 
 ## 2. Lokal ausprobieren (optional)
 
@@ -51,8 +52,9 @@ Im Projektordner ein Terminal öffnen und eingeben:
 python -m http.server 8000
 ```
 
-Dann im Browser <http://localhost:8000/admin.html> öffnen, anmelden und einen Testspieler anlegen.
-Bei Klick auf **Link kopieren** bekommst du den Spielerlink, den du in einem zweiten Fenster öffnest.
+Dann im Browser <http://localhost:8000/admin.html> öffnen und anmelden. Unter **Einladungslink** auf
+**Link kopieren** klicken und den Link in einem privaten Fenster öffnen, dort als Testspieler beitreten.
+**Achtung:** Auch lokal wird in die echte Datenbank geschrieben. Den Testspieler danach wieder entfernen.
 
 ## 3. Webseite kostenlos veröffentlichen (GitHub Pages)
 
@@ -74,12 +76,25 @@ Bei Klick auf **Link kopieren** bekommst du den Spielerlink, den du in einem zwe
 ## 4. Spiel starten
 
 1. `admin.html` öffnen und anmelden.
-2. Unter **Spieler** alle Mitspieler anlegen.
-3. Sobald alle ihre Felder ausgefüllt haben, oben den **Schalter „Felder sperren“** umlegen.
+2. Im Reiter **👥 Spieler** steht oben der **Einladungslink**. Ihn per **WhatsApp**-Knopf oder
+   **Link kopieren** an alle schicken, gern auch in die Familiengruppe.
+3. Wer den Link öffnet, gibt seinen Namen ein und ist dabei. Jeder neue Spieler darf erst einmal
+   Tageswörter eintragen. Danach landet er automatisch auf seinem **persönlichen Link** (am besten
+   als Lesezeichen speichern). Mit **„🔗 Meinen Link kopieren“** unter dem Feld kommt man damit auch
+   auf einem anderen Gerät ins eigene Feld. Diesen persönlichen Link nicht weitergeben.
+4. Sind alle dabei, kannst du den Schalter **„Neue Spieler dürfen beitreten“** ausschalten. Wenn der
+   Link in falsche Hände geraten ist, erzeugt **„Neuen Link erzeugen“** einen neuen; der alte
+   funktioniert dann nicht mehr. Wer schon mitspielt, bleibt dabei.
+5. Sobald alle ihre Felder ausgefüllt haben, oben den **Schalter „Felder sperren“** umlegen.
    Mit demselben Schalter kannst du jederzeit wieder entsperren.
-4. Jedem Spieler per **WhatsApp**-Knopf oder **Link kopieren** seinen persönlichen Link schicken.
-   **Wichtig:** Jeder Link gehört zu genau einem Spieler, also nicht in die Familiengruppe posten,
-   sondern einzeln verschicken.
+
+### Spieler verwalten
+
+Im Reiter **👥 Spieler** hat jeder Spieler eine Karte:
+
+- **„Darf Tageswörter eintragen“**: Recht wegnehmen oder wieder geben.
+- **Link kopieren / WhatsApp**: den persönlichen Link des Spielers erneut schicken, falls er ihn verloren hat.
+- **Entfernen**: Spieler samt Feld aus dem Spiel nehmen. Sein persönlicher Link funktioniert dann nicht mehr.
 
 ## 5. In der Adventszeit
 
@@ -91,8 +106,6 @@ Bei Klick auf **Link kopieren** bekommst du den Spielerlink, den du in einem zwe
   als Treffer.
 - Beim Eintippen sieht man schon, bei wem das Wort steht, und auch ähnliche Schreibweisen
   (z. B. „Plätzchen“ vs. „Plätzchen backen“).
-- Im Reiter **👥 Spieler** kannst du pro Spieler mit dem Schalter **„Darf Tageswörter eintragen“**
-  das Recht wegnehmen und wieder geben.
 - Im Reiter **👀 Alle Felder** sehen alle Spieler jederzeit die Felder der anderen samt Rangliste.
 - Volle Reihen, Spalten oder Diagonalen werden rot-golden markiert, und es gibt Konfetti und „BINGO!“.
 
@@ -111,6 +124,16 @@ Der kostenlose Firebase-Tarif „Spark“ erlaubt 50.000 Lesevorgänge und 20.00
 Eine Familie braucht davon nur einen Bruchteil. Es ist keine Kreditkarte nötig, also können keine Kosten entstehen.
 
 ## Update auf die neue Version
+
+### Update „Einladungslink“
+
+1. Den Inhalt von `firestore.rules` in Firebase unter **Firestore Database → Regeln** einfügen und
+   **Veröffentlichen**.
+2. Alle Dateien wieder bei GitHub hochladen.
+3. **Einmal `admin.html` öffnen und anmelden.** Dabei wird der Einladungslink erzeugt. Alle bisherigen
+   Spieler und Links bleiben gültig.
+
+### Update von der allerersten Version
 
 Die bisherigen Spieler-Links bleiben gültig, die eingetragenen Felder bleiben erhalten.
 

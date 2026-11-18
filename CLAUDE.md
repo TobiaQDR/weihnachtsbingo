@@ -29,13 +29,14 @@ Deploying means uploading the files to GitHub Pages and pasting `firestore.rules
 | Path | Content | Access |
 |---|---|---|
 | `game/settings` | `{ locked }`: manual lock of all player fields | read all, write admin |
-| `players/{code}` | `{ name, boardId }`. The doc ID is the **secret** in the player's personal link | `get` by anyone who knows the code; `list`/write admin only |
-| `boards/{boardId}` | `{ name, cells[25], canAddWords }`: public bingo board | read all; the owner may change only `cells`, and only while not locked |
-| `members/{uid}` | `{ code, boardId }`: links an anonymous-auth browser to a player | own uid only; created by proving the code (rules check `players/{code}.boardId`) |
+| `game/invite` | `{ code, open }`: secret invite code for `index.html?einladung=<code>`; created by `admin.js` on login | admin only (rules still `get()` it) |
+| `players/{code}` | `{ name, boardId, uid?, invite? }`. The doc ID is the **secret** in the player's personal link | `get` by anyone who knows the code; `list`/update/delete admin only; create by admin or self-join |
+| `boards/{boardId}` | `{ name, cells[25], canAddWords }`: public bingo board | read all; create by admin or self-join (empty cells, `canAddWords == true`); the owner may change only `cells`, and only while not locked |
+| `members/{uid}` | `{ code, boardId }`: links an anonymous-auth browser to a player | own uid only (admin may delete); created by proving the code (rules check `getAfter(players/{code}).boardId`) |
 | `days/{1..24}` | `{ words[], updatedBy, updatedAt }`: words of each Advent day | read all; write by admin or by members whose board has `canAddWords != false` |
 | `draws/*` | legacy format, migrated away | admin only |
 
-The key design constraint: everyone can see all boards, but the personal links (`players/{code}`) must never be listable by players. Writes are authorized through `members/{auth.uid}`. Players sign in **anonymously** in the background (`joinGame()` in `app.js`); the admin signs in with email/password, and `admin.js` treats anonymous users as logged out.
+The key design constraint: everyone can see all boards, but the personal links (`players/{code}`) must never be listable by players. Writes are authorized through `members/{auth.uid}`. Players join themselves via the invite link: the join form in `app.js` writes `boards/{id}`, `players/{code}` (with `uid` and the `invite` code) and `members/{uid}` in **one batch**, and the rules tie the three together with `getAfter()` and check the invite against `game/invite` (`open == true`). The admin can toggle `open`, regenerate the code, change `canAddWords` and remove players (deletes board, player and `members/{uid}`). Players sign in **anonymously** in the background (`ensureUser()` / `joinGame()` in `app.js`); the admin signs in with email/password, and `admin.js` treats anonymous users as logged out.
 
 On first login, `admin.js` (`maybeMigrate`) migrates legacy data once: it creates `boards` for players without a `boardId`, moves December `draws` into `days` and deletes the old `lockDate`. The player page shows a hint until this has run.
 
