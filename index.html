@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#9b1c1c">
+  <meta name="robots" content="noindex">
+  <title>Weihnachtsbingo 2026</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Mountains+of+Christmas:wght@700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <h1>🎄 Weihnachtsbingo 2026</h1>
+    <p id="greeting" class="greeting"></p>
+  </header>
+
+  <main class="wrap">
+    <div id="loading" class="card center">Wird geladen …</div>
+
+    <div id="error" class="card center error" hidden></div>
+
+    <section id="game" hidden>
+      <div id="bingo" class="bingo-banner" hidden></div>
+      <p id="status" class="status"></p>
+
+      <div id="grid" class="grid" role="grid" aria-label="Dein Bingo-Feld"></div>
+
+      <p id="progress" class="progress"></p>
+
+      <section class="card">
+        <h2>Gezogene Wörter</h2>
+        <ul id="draws" class="draws"></ul>
+      </section>
+    </section>
+  </main>
+
+  <!-- Eingabefenster für ein Feld -->
+  <div id="editor" class="overlay" hidden>
+    <form id="editor-form" class="dialog" autocomplete="off">
+      <h2 id="editor-title">Feld</h2>
+      <input id="editor-input" type="text" maxlength="40" enterkeyhint="done"
+             placeholder="Wort eintragen …" aria-label="Wort">
+      <p id="editor-msg" class="msg"></p>
+      <div class="buttons">
+        <button type="button" id="editor-cancel" class="btn ghost">Abbrechen</button>
+        <button type="button" id="editor-clear" class="btn ghost">Leeren</button>
+        <button type="submit" class="btn primary">Speichern</button>
+      </div>
+    </form>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

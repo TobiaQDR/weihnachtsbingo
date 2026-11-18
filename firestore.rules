@@ -1,0 +1,46 @@
+rules_version = '2';
+
+// Sicherheitsregeln für das Weihnachtsbingo.
+// In der Firebase-Konsole unter Firestore Database > Regeln einfügen und "Veröffentlichen".
+// WICHTIG: ADMIN_UID_HIER durch die UID deines Spielleiter-Kontos ersetzen.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAdmin() {
+      return request.auth != null && request.auth.uid == 'T0mHHroTerXRkcUytm1TyrNR6Sx1';
+    }
+
+    function fieldsLocked() {
+      let s = get(/databases/$(database)/documents/game/settings).data;
+      return s.get('locked', false) == true
+        || (s.get('lockDate', null) != null && request.time >= s.lockDate);
+    }
+
+    // Spieleinstellungen (Sperre): alle lesen, nur Spielleiter schreibt
+    match /game/settings {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Gezogene Wörter: alle lesen, nur Spielleiter schreibt
+    match /draws/{drawId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Spielerfelder: Wer den geheimen Link kennt, darf sein Feld lesen und bis zur Sperre
+    // die 25 Wörter ändern. Auflisten aller Spieler darf nur der Spielleiter.
+    match /players/{code} {
+      allow get: if true;
+      allow list: if isAdmin();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (
+        !fieldsLocked()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['cells'])
+        && request.resource.data.cells is list
+        && request.resource.data.cells.size() == 25
+      );
+    }
+  }
+}
