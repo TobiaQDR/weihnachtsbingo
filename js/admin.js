@@ -14,11 +14,12 @@ import {
 import {
   $, toast, initTabs, startSnow, miniGridHtml, calendarHtml, createDayEditor,
 } from "./ui.js";
+import { createSongsView, addDefaultSongs } from "./songs.js";
 
 const state = {
   settings: {},
   invite: null,    // { code, open }: geheimer Einladungscode
-  players: null,   // geheime Link-Dokumente: { id: code, name, boardId }
+  players: null,   // geheime Link-Dokumente: { id: code, name, boardId, uid?, pinKey? }
   boards: null,    // öffentliche Felder
   dayDocs: [],
   days: new Map(),
@@ -84,6 +85,7 @@ async function startAdmin() {
   try {
     const snap = await getDoc(settingsRef);
     if (!snap.exists()) await setDoc(settingsRef, { locked: false });
+    if (!snap.data()?.songsSeeded) await seedSongs(settingsRef);
     const inv = await getDoc(inviteRef);
     if (!inv.exists()) await setDoc(inviteRef, { code: randomId(16), open: true });
   } catch (err) {
@@ -114,7 +116,17 @@ async function startAdmin() {
       state.days = daysMap(state.dayDocs);
       renderAll();
     }, loadError),
+    songsView.start(),
   );
+}
+
+/** Liederpool einmalig mit den klassischen Weihnachtsliedern füllen. */
+async function seedSongs(settingsRef) {
+  const batch = writeBatch(db);
+  addDefaultSongs(batch);
+  batch.set(settingsRef, { songsSeeded: true }, { merge: true });
+  await batch.commit();
+  toast("🎶 Liederpool mit klassischen Weihnachtsliedern gefüllt.");
 }
 
 function loadError(err) {
@@ -291,7 +303,9 @@ function renderPlayers() {
       <span class="rank">${idx + 1}.</span>
       <strong class="name">${escapeHtml(b.name)}</strong>
       ${r.lines.length ? `<span class="badge">BINGO ×${r.lines.length}</span>` : ""}`;
-    card.querySelector(".meta").textContent = `${r.hits} Treffer · ${r.filled}/${CELL_COUNT} ausgefüllt`;
+    const hasPin = Boolean(state.players.find((p) => p.boardId === id)?.pinKey);
+    card.querySelector(".meta").textContent =
+      `${r.hits} Treffer · ${r.filled}/${CELL_COUNT} ausgefüllt${hasPin ? "" : " · noch keine PIN"}`;
     const perm = card.querySelector("[data-perm]");
     if (perm.checked !== canAddWords(b)) perm.checked = canAddWords(b);
     card.querySelector("[data-copy]").dataset.copy = link;
@@ -337,6 +351,7 @@ $("players").addEventListener("click", async (e) => {
     batch.delete(doc(db, "boards", b.id));
     batch.delete(doc(db, "players", p.id));
     if (p.uid) batch.delete(doc(db, "members", p.uid));
+    if (p.pinKey) batch.delete(doc(db, "logins", p.pinKey));
     if (!(await save(batch.commit(), `${b.name} entfernt.`))) card.classList.remove("leaving");
   }
 });
@@ -375,6 +390,14 @@ const dayEditor = createDayEditor({
 $("calendar").addEventListener("click", (e) => {
   const door = e.target.closest("[data-day]");
   if (door) dayEditor.open(Number(door.dataset.day), { canEdit: true });
+});
+
+// ---------- Lieder ----------
+
+const songsView = createSongsView({
+  root: $("songs"),
+  admin: true,
+  getUser: () => ({ name: "Spielleitung", canEdit: true, note: "" }),
 });
 
 // ---------- Hilfen ----------

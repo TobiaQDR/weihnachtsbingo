@@ -50,6 +50,7 @@
       <nav class="tabs" id="tabs" role="tablist">
         <button type="button" data-tab="players" role="tab">👥 <span>Spieler</span></button>
         <button type="button" data-tab="calendar" role="tab">📅 <span>Kalender</span></button>
+        <button type="button" data-tab="songs" role="tab">🎶 <span>Lieder</span></button>
         <span class="tab-ind" aria-hidden="true"></span>
       </nav>
 
@@ -77,6 +78,9 @@
         <p class="intro-text">Tippe auf einen Tag, um Wörter einzutragen oder zu ändern. Als Spielleitung kannst du auch Türchen bearbeiten, die noch zu sind.</p>
         <div id="calendar" class="calendar"></div>
       </section>
+
+      <!-- Weihnachtslieder (Inhalt baut js/songs.js) -->
+      <section class="view" data-view="songs" id="songs" hidden></section>
 
       <p class="center"><button type="button" id="logout" class="btn ghost light">Abmelden</button></p>
     </div>

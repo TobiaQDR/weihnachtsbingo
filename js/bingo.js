@@ -157,8 +157,77 @@ export function makePlayerCode(name) {
   return slug ? `${slug}-${suffix}` : suffix;
 }
 
+// ---------- PIN ----------
+
+/** 4 bis 8 Ziffern. */
+export function isValidPin(pin) {
+  return /^\d{4,8}$/.test(String(pin ?? ""));
+}
+
+/**
+ * Schlüssel des Anmelde-Dokuments logins/{key}: SHA-256 aus Feld und PIN.
+ * Wer Name und PIN kennt, findet darüber seinen geheimen Spieler-Code.
+ */
+export async function pinKey(boardId, pin) {
+  const data = new TextEncoder().encode(`weihnachtsbingo:${boardId}:${pin}`);
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(hash), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 export function escapeHtml(s) {
   return String(s ?? "").replace(/[&<>"']/g, (ch) => (
     { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]
   ));
+}
+
+// ---------- Weihnachtslieder ----------
+
+export const SONGS_PER_DAY = 3;
+export const MAX_SONG_LENGTH = 60;
+
+export function cleanSong(title) {
+  return String(title ?? "").replace(/\s+/g, " ").trim().slice(0, MAX_SONG_LENGTH);
+}
+
+/** Dokument-ID eines Liedes im Pool, z. B. "stille-nacht-heilige-nacht". Gleiche ID = gleiches Lied. */
+export function songId(title) {
+  return normalize(title)
+    .replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+}
+
+/** Lieder eines Tages aus dem Dokument songDays/{n}: { picked: [{ title, by }], random: [title] } */
+export function songDayOf(data) {
+  const picked = (Array.isArray(data?.picked) ? data.picked : [])
+    .filter((p) => p && String(p.title ?? "").trim())
+    .map((p) => ({ title: String(p.title), by: String(p.by ?? "") }));
+  const random = (Array.isArray(data?.random) ? data.random : []).map(String).filter((t) => t.trim());
+  return { picked, random };
+}
+
+/**
+ * Zufällige Lieder aus dem Pool ziehen.
+ * @param pool       alle Liedtitel
+ * @param count      wie viele
+ * @param exclude    Titel, die nicht vorkommen dürfen (z. B. von Spielern gewählte)
+ * @param previous   bisherige Zufallslieder – werden nur genommen, wenn nichts anderes übrig ist
+ * @param usedCount  Map songId → wie oft das Lied an anderen Tagen schon dran ist (seltene zuerst)
+ */
+export function pickRandomSongs(pool, count, { exclude = [], previous = [], usedCount = new Map() } = {}) {
+  const ex = new Set(exclude.map(songId));
+  const prev = new Set(previous.map(songId));
+  const seen = new Set();
+  const candidates = [];
+  for (const title of pool) {
+    const id = songId(title);
+    if (!id || ex.has(id) || seen.has(id)) continue;
+    seen.add(id);
+    candidates.push({ title, rank: (prev.has(id) ? 1000 : 0) + (usedCount.get(id) ?? 0), r: Math.random() });
+  }
+  return candidates
+    .sort((a, b) => a.rank - b.rank || a.r - b.r)
+    .slice(0, Math.max(0, count))
+    .map((c) => c.title);
 }

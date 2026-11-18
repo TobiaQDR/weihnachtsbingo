@@ -9,8 +9,8 @@ Einmalig ca. 20–30 Minuten. Kostet nichts. Du brauchst ein Google-Konto (für 
 
 | Datei | Wofür |
 |---|---|
-| `index.html` | Seite für die Spieler (Beitritt über den Einladungslink, danach hat jeder seinen persönlichen Link) |
-| `admin.html` | Seite für dich als Spielleiter: Einladungslink verschicken, Felder sperren, Rechte vergeben, Spieler entfernen, Kalender pflegen |
+| `index.html` | Seite für die Spieler (Einladungslink: neu mitspielen, mit Name + PIN anmelden oder als Gast zuschauen) |
+| `admin.html` | Seite für dich als Spielleiter: Einladungslink verschicken, Felder sperren, Rechte vergeben, Spieler entfernen, Kalender und Lieder pflegen |
 | `js/firebase-config.js` | **Hier trägst du deine Firebase-Daten ein** |
 | `firestore.rules` | Sicherheitsregeln, werden in Firebase eingefügt |
 
@@ -42,7 +42,8 @@ Einmalig ca. 20–30 Minuten. Kostet nichts. Du brauchst ein Google-Konto (für 
 > Geschützt wird alles durch die Regeln: Nur du kannst sperren, Rechte vergeben und Spieler entfernen.
 > Mitspielen kann nur, wer den Einladungslink hat. Ein Spieler kann nur sein eigenes Feld ändern, und auch
 > das nur, solange die Felder nicht gesperrt sind. Die Felder aller Spieler kann jeder sehen, die
-> persönlichen Links aber nicht.
+> persönlichen Links aber nicht. Die PIN schützt vor Verwechslungen und neugierigen Verwandten, ist
+> aber kein Banktresor: Wer sich mit Technik auskennt, könnte eine 4-stellige PIN durchprobieren.
 
 ## 2. Lokal ausprobieren (optional)
 
@@ -78,10 +79,15 @@ Dann im Browser <http://localhost:8000/admin.html> öffnen und anmelden. Unter *
 1. `admin.html` öffnen und anmelden.
 2. Im Reiter **👥 Spieler** steht oben der **Einladungslink**. Ihn per **WhatsApp**-Knopf oder
    **Link kopieren** an alle schicken, gern auch in die Familiengruppe.
-3. Wer den Link öffnet, gibt seinen Namen ein und ist dabei. Jeder neue Spieler darf erst einmal
-   Tageswörter eintragen. Danach landet er automatisch auf seinem **persönlichen Link** (am besten
-   als Lesezeichen speichern). Mit **„🔗 Meinen Link kopieren“** unter dem Feld kommt man damit auch
-   auf einem anderen Gerät ins eigene Feld. Diesen persönlichen Link nicht weitergeben.
+3. Wer den Link öffnet, hat drei Möglichkeiten:
+   - **🎁 Neu mitspielen**: Namen und eine **PIN** (4 bis 8 Ziffern) eingeben, schon ist man dabei.
+     Jeder neue Spieler darf erst einmal Tageswörter eintragen.
+   - **🔑 Ich spiele schon mit**: auf einem weiteren Gerät (Handy, Tablet, Laptop) den eigenen Namen
+     aus der Liste wählen und die PIN eingeben. Danach ist man dort in seinem Feld.
+   - **👀 Nur zuschauen**: als Gast alle Felder, die Rangliste und die Wörter im Kalender ansehen.
+     Gäste bekommen kein eigenes Feld und können nichts eintragen.
+   Das Gerät merkt sich, wer man ist. Unter dem eigenen Feld kann man die **PIN ändern** und sich
+   **abmelden** (z. B. auf einem Tablet, das sich mehrere teilen).
 4. Sind alle dabei, kannst du den Schalter **„Neue Spieler dürfen beitreten“** ausschalten. Wenn der
    Link in falsche Hände geraten ist, erzeugt **„Neuen Link erzeugen“** einen neuen; der alte
    funktioniert dann nicht mehr. Wer schon mitspielt, bleibt dabei.
@@ -93,7 +99,10 @@ Dann im Browser <http://localhost:8000/admin.html> öffnen und anmelden. Unter *
 Im Reiter **👥 Spieler** hat jeder Spieler eine Karte:
 
 - **„Darf Tageswörter eintragen“**: Recht wegnehmen oder wieder geben.
-- **Link kopieren / WhatsApp**: den persönlichen Link des Spielers erneut schicken, falls er ihn verloren hat.
+- **„noch keine PIN“** steht dabei, wenn ein Spieler noch keine PIN festgelegt hat (z. B. weil er schon
+  vor dem Update dabei war). Er kann sie unter seinem Feld festlegen.
+- **Link kopieren / WhatsApp**: den persönlichen Link des Spielers schicken. Damit kommt er direkt in
+  sein Feld, auch wenn er seine PIN vergessen hat. Dort kann er dann eine neue PIN festlegen.
 - **Entfernen**: Spieler samt Feld aus dem Spiel nehmen. Sein persönlicher Link funktioniert dann nicht mehr.
 
 ## 5. In der Adventszeit
@@ -109,9 +118,27 @@ Im Reiter **👥 Spieler** hat jeder Spieler eine Karte:
 - Im Reiter **👀 Alle Felder** sehen alle Spieler jederzeit die Felder der anderen samt Rangliste.
 - Volle Reihen, Spalten oder Diagonalen werden rot-golden markiert, und es gibt Konfetti und „BINGO!“.
 
+### Weihnachtslieder
+
+Im Reiter **🎶 Lieder** wird für jeden Abend (1. bis 24. Dezember) festgelegt, was gesungen wird.
+
+- Oben die Tage antippen; heute ist vorausgewählt. Pro Abend gibt es **höchstens 3 Lieder**.
+- **Lied aussuchen**: Jeder Spieler kann ein Lied aus dem Liederpool wählen und mit **＋** hinzufügen.
+  Es steht dann mit seinem Namen (👤) da und bleibt fest, andere Spieler können es nicht austauschen.
+- **🎲 Mit Zufallsliedern auffüllen**: füllt die freien Plätze mit zufälligen Liedern aus dem Pool
+  (gestrichelt, „🎲 Zufall“). Nochmal drücken („Neu würfeln“) ersetzt die Zufallslieder durch neue.
+  Lieder, die an anderen Abenden schon dran sind, kommen seltener.
+- Sucht jemand ein Lied aus, obwohl schon 3 Lieder dastehen, fliegt dafür ein Zufallslied raus.
+- **📖 Liederpool**: Zu Beginn mit klassischen deutschen Weihnachtsliedern gefüllt. Jeder Spieler kann
+  Lieder ergänzen (es reicht der Name des Liedes).
+- **Als Spielleitung** kannst du mit **✕** Lieder aus dem Pool und von einzelnen Abenden entfernen,
+  auch die von Spielern ausgesuchten.
+- Gäste sehen die Lieder nur an. Lieder kann man auch schon für spätere Abende aussuchen.
+
 ## Tipps für die Mitspieler
 
 - Einfach den Link antippen, es muss nichts installiert werden.
+- **PIN gut merken.** Damit kommt man auf jedem weiteren Gerät über den Einladungslink in sein Feld.
 - **Als App auf den Startbildschirm legen:**
   - iPhone (Safari): Teilen-Symbol → „Zum Home-Bildschirm“
   - Android (Chrome): ⋮ → „Zum Startbildschirm hinzufügen“
@@ -124,6 +151,22 @@ Der kostenlose Firebase-Tarif „Spark“ erlaubt 50.000 Lesevorgänge und 20.00
 Eine Familie braucht davon nur einen Bruchteil. Es ist keine Kreditkarte nötig, also können keine Kosten entstehen.
 
 ## Update auf die neue Version
+
+### Update „Weihnachtslieder“
+
+1. Den Inhalt von `firestore.rules` in Firebase unter **Firestore Database → Regeln** einfügen und
+   **Veröffentlichen**.
+2. Alle Dateien wieder bei GitHub hochladen (inklusive der neuen Datei `js/songs.js`).
+3. **Einmal `admin.html` öffnen und anmelden.** Dabei wird der Liederpool mit den klassischen
+   Weihnachtsliedern gefüllt (Meldung „Liederpool … gefüllt“).
+
+### Update „PIN und Gäste“
+
+1. Den Inhalt von `firestore.rules` in Firebase unter **Firestore Database → Regeln** einfügen und
+   **Veröffentlichen**.
+2. Alle Dateien wieder bei GitHub hochladen.
+3. Wer schon mitspielt, bleibt dabei und sieht über seinem Feld den Hinweis **„PIN festlegen“**.
+   Erst mit PIN kann man sich auf weiteren Geräten anmelden.
 
 ### Update „Einladungslink“
 

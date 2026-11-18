@@ -27,25 +27,66 @@
 
     <div id="error" class="card center error" hidden></div>
 
-    <!-- Beitreten über den Einladungslink -->
-    <form id="join" class="card pop-in" autocomplete="off" hidden>
-      <h2>Mitspielen 🎄</h2>
-      <p class="muted">Du wurdest zum Weihnachtsbingo eingeladen! Wie heißt du? Unter diesem Namen sehen dich die anderen.</p>
-      <input id="join-name" type="text" maxlength="30" placeholder="Dein Name, z. B. Oma" required aria-label="Name" enterkeyhint="go">
-      <p id="join-msg" class="msg"></p>
-      <button type="submit" id="join-btn" class="btn primary block">Beitreten</button>
-    </form>
+    <!-- Einladungslink: neu mitspielen, als bestehender Spieler anmelden oder nur zuschauen -->
+    <div id="join" class="card pop-in" hidden>
+      <div id="join-start" class="join-step">
+        <h2>Weihnachtsbingo 🎄</h2>
+        <p class="muted">Du wurdest eingeladen! Was möchtest du tun?</p>
+        <div class="choices">
+          <button type="button" class="btn primary block" data-mode="join-new">🎁 Neu mitspielen</button>
+          <button type="button" class="btn block" data-mode="join-login">🔑 Ich spiele schon mit</button>
+          <button type="button" class="btn ghost block" data-mode="guest">👀 Nur zuschauen</button>
+        </div>
+      </div>
+
+      <form id="join-new" class="join-step" autocomplete="off" hidden>
+        <h2>Neu mitspielen 🎁</h2>
+        <label>Dein Name
+          <input id="join-name" type="text" maxlength="30" placeholder="z. B. Oma" required>
+        </label>
+        <p class="hint">Unter diesem Namen sehen dich die anderen.</p>
+        <label>Deine PIN (4 bis 8 Ziffern)
+          <input id="join-pin" type="text" inputmode="numeric" maxlength="8" placeholder="z. B. 2412" required enterkeyhint="go">
+        </label>
+        <p class="hint">Damit meldest du dich auf anderen Geräten an. Gut merken!</p>
+        <p id="join-msg" class="msg"></p>
+        <button type="submit" id="join-btn" class="btn primary block">Beitreten</button>
+        <button type="button" class="btn ghost block" data-mode="join-start">Zurück</button>
+      </form>
+
+      <form id="join-login" class="join-step" autocomplete="off" hidden>
+        <h2>Anmelden 🔑</h2>
+        <label>Wer bist du?
+          <select id="login-name" required></select>
+        </label>
+        <label>Deine PIN
+          <input id="login-pin" type="text" inputmode="numeric" maxlength="8" required enterkeyhint="go">
+        </label>
+        <p id="login-msg" class="msg"></p>
+        <button type="submit" id="login-btn" class="btn primary block">Anmelden</button>
+        <button type="button" class="btn ghost block" data-mode="join-start">Zurück</button>
+      </form>
+    </div>
 
     <div id="game" hidden>
-      <nav class="tabs" id="tabs" role="tablist">
+      <div id="guest-bar" class="pill" hidden>
+        👀 Du schaust als Gast zu.
+        <button type="button" id="guest-leave" class="link-btn">Mitspielen oder anmelden</button>
+      </div>
+      <nav class="tabs stacked" id="tabs" role="tablist">
         <button type="button" data-tab="mine" role="tab">🎄 <span>Mein Feld</span></button>
         <button type="button" data-tab="all" role="tab">👀 <span>Alle Felder</span></button>
         <button type="button" data-tab="calendar" role="tab">📅 <span>Kalender</span></button>
+        <button type="button" data-tab="songs" role="tab">🎶 <span>Lieder</span></button>
         <span class="tab-ind" aria-hidden="true"></span>
       </nav>
 
       <!-- Mein Feld -->
       <section class="view" data-view="mine" hidden>
+        <div id="pin-hint" class="pin-hint" hidden>
+          🔑 Lege eine PIN fest, damit du dich auch auf anderen Geräten anmelden kannst.
+          <button type="button" id="pin-hint-btn" class="btn small primary">PIN festlegen</button>
+        </div>
         <div id="bingo" class="bingo-banner" hidden></div>
         <p id="status" class="pill"></p>
         <div id="grid" class="grid board" role="grid" aria-label="Dein Bingo-Feld"></div>
@@ -53,7 +94,10 @@
           <div class="progress-bar"><span id="progress-fill"></span></div>
           <p id="progress" class="progress"></p>
         </div>
-        <p class="center"><button type="button" id="my-link" class="btn ghost light">🔗 Meinen Link kopieren</button></p>
+        <p class="center account-row">
+          <button type="button" id="pin-open" class="btn ghost light">🔑 PIN ändern</button>
+          <button type="button" id="logout" class="btn ghost light">Abmelden</button>
+        </p>
       </section>
 
       <!-- Alle Felder -->
@@ -67,6 +111,9 @@
         <p id="calendar-note" class="intro-text"></p>
         <div id="calendar" class="calendar"></div>
       </section>
+
+      <!-- Weihnachtslieder (Inhalt baut js/songs.js) -->
+      <section class="view" data-view="songs" id="songs" hidden></section>
     </div>
   </main>
 
@@ -81,6 +128,21 @@
         <button type="button" id="editor-cancel" class="btn ghost">Abbrechen</button>
         <button type="button" id="editor-clear" class="btn ghost">Leeren</button>
         <button type="submit" class="btn primary">Speichern</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- PIN festlegen / ändern -->
+  <div id="pin-dialog" class="overlay" hidden>
+    <form id="pin-form" class="dialog" autocomplete="off" role="dialog" aria-modal="true" aria-labelledby="pin-title">
+      <h2 id="pin-title">PIN festlegen</h2>
+      <p class="muted">Mit deinem Namen und dieser PIN meldest du dich auf anderen Geräten an.</p>
+      <input id="pin-input" type="text" inputmode="numeric" maxlength="8" enterkeyhint="done"
+             placeholder="4 bis 8 Ziffern" aria-label="PIN">
+      <p id="pin-msg" class="msg"></p>
+      <div class="buttons">
+        <button type="button" id="pin-cancel" class="btn ghost">Abbrechen</button>
+        <button type="submit" id="pin-save" class="btn primary">Speichern</button>
       </div>
     </form>
   </div>

@@ -1,5 +1,5 @@
 import {
-  doc, collection, onSnapshot, getDoc, getDocs, setDoc, updateDoc, writeBatch, serverTimestamp,
+  doc, collection, onSnapshot, getDoc, getDocs, setDoc, updateDoc, deleteDoc, writeBatch, serverTimestamp,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import {
   getAuth, signInAnonymously, onAuthStateChanged,
@@ -7,16 +7,19 @@ import {
 import { app, db, configured } from "./firebase.js";
 import {
   CELL_COUNT, normalize, cleanWord, cellsOf, canAddWords, daysMap, drawnMap, scoreBoard, ranking,
-  isDayOpen, escapeHtml, emptyCells, makePlayerCode, randomId,
+  isDayOpen, escapeHtml, emptyCells, makePlayerCode, randomId, isValidPin, pinKey,
 } from "./bingo.js";
 import {
   $, toast, initTabs, startSnow, confetti, openOverlay, closeOverlay, miniGridHtml,
   calendarHtml, createDayEditor, storageGet, storageSet, reducedMotion,
 } from "./ui.js";
+import { createSongsView } from "./songs.js";
 
 const state = {
   code: null,
   boardId: null,
+  pinKey: null,     // Schlüssel des Anmelde-Dokuments logins/{pinKey}, null = noch keine PIN
+  guest: false,     // schaut nur zu, hat kein eigenes Feld
   boards: null,     // alle Felder
   dayDocs: null,    // Rohdaten der Tage
   days: new Map(),  // Tag → Wörter
@@ -26,11 +29,28 @@ const state = {
   prevMask: null,
 };
 
+// Lieder-Reiter (vor dem Start anlegen, weil startGuest() sofort abonniert)
+const songsView = createSongsView({
+  root: $("songs"),
+  getUser: () => {
+    if (state.guest) return { name: "", canEdit: false, note: "👀 Als Gast kannst du die Lieder nur ansehen." };
+    if (!state.member) return { name: "", canEdit: false, note: "Aussuchen ist gerade nicht möglich. Lade die Seite bitte neu." };
+    return { name: me()?.name ?? "", canEdit: true, note: "" };
+  },
+});
+
 // ---------- Start ----------
 
 const MAX_NAME_LENGTH = 30;
+const PIN_FORMAT_MSG = "Die PIN besteht aus 4 bis 8 Ziffern.";
 /** Geheimer Code aus dem Einladungslink (index.html?einladung=…), mit dem man selbst beitritt. */
 const invite = new URLSearchParams(location.search).get("einladung");
+// Gemerkt, damit man nach dem Abmelden wieder auf der Einladungsseite landet
+if (invite) storageSet("bingoEinladung", invite);
+
+function storageRemove(key) {
+  try { localStorage.removeItem(key); } catch { /* egal */ }
+}
 
 function getCode() {
   const fromUrl = new URLSearchParams(location.search).get("spieler");
@@ -39,7 +59,7 @@ function getCode() {
 }
 
 function forgetCode() {
-  try { localStorage.removeItem("bingoCode"); } catch { /* egal */ }
+  storageRemove("bingoCode");
 }
 
 function showError(text) {
@@ -57,13 +77,15 @@ if (!configured) {
   showError("Das Spiel ist noch nicht eingerichtet (Firebase-Daten fehlen in js/firebase-config.js).");
 } else if (state.code) {
   start().catch(onLoadError);
+} else if (invite && storageGet("bingoGast") === "1") {
+  startGuest();
 } else if (invite) {
   showJoin();
 } else {
   showError("Bitte öffne den Link, den du für das Weihnachtsbingo bekommen hast.");
 }
 
-/** Persönlicher Link dieses Spielers (damit kommt man auch auf anderen Geräten ins eigene Feld). */
+/** Persönlicher Link dieses Spielers (führt direkt ins eigene Feld). */
 function personalLink() {
   const url = new URL(location.href);
   url.search = new URLSearchParams({ spieler: state.code }).toString();
@@ -80,7 +102,7 @@ async function start() {
       showJoin();
       return;
     }
-    showError("Diesen Spieler-Link gibt es nicht (mehr). Vielleicht wurdest du aus dem Spiel entfernt – frag bitte beim Spielleiter nach.");
+    showError("Diesen Spieler gibt es nicht (mehr). Vielleicht wurdest du aus dem Spiel entfernt – frag bitte beim Spielleiter nach.");
     return;
   }
   // Adresszeile auf den persönlichen Link umstellen, damit ein Lesezeichen immer ins eigene Feld führt
@@ -88,11 +110,36 @@ async function start() {
     history.replaceState(null, "", personalLink());
   }
   state.boardId = snap.data().boardId;
+  state.pinKey = snap.data().pinKey ?? null;
   if (!state.boardId) {
     showError("Das Spiel wurde gerade aktualisiert. Der Spielleiter muss einmal die Spielleiter-Seite öffnen – danach geht es hier weiter.");
     return;
   }
 
+  // PIN aktuell halten (sie kann auch auf einem anderen Gerät geändert werden)
+  onSnapshot(doc(db, "players", state.code), (s) => {
+    if (!s.exists()) return; // Entfernen merkt render() am fehlenden Feld
+    state.pinKey = s.data().pinKey ?? null;
+    render();
+  }, (err) => console.error(err));
+
+  subscribe();
+  joinGame();
+}
+
+/** Nur zuschauen: alle Felder und den Kalender sehen, ohne eigenes Feld. */
+function startGuest() {
+  state.guest = true;
+  $("join").hidden = true;
+  $("loading").hidden = false;
+  // Kein eigenes Feld: Reiter „Mein Feld“ fällt weg
+  document.querySelector('#tabs [data-tab="mine"]')?.remove();
+  document.querySelector('[data-view="mine"]')?.remove();
+  $("guest-bar").hidden = false;
+  subscribe();
+}
+
+function subscribe() {
   onSnapshot(collection(db, "boards"), (s) => {
     state.boards = s.docs.map((d) => ({ id: d.id, ...d.data() }));
     render();
@@ -109,10 +156,10 @@ async function start() {
     render();
   }, onLoadError);
 
+  songsView.start();
+
   // Türchen öffnen sich um Mitternacht
   setInterval(renderCalendar, 60_000);
-
-  joinGame();
 }
 
 /** Angemeldeten Nutzer holen, notfalls im Hintergrund anonym anmelden. */
@@ -142,36 +189,78 @@ async function joinGame() {
   render();
 }
 
-// ---------- Selbst beitreten ----------
+// ---------- Einladung: neu mitspielen, anmelden oder zuschauen ----------
 
 function showJoin() {
   $("loading").hidden = true;
   $("error").hidden = true;
   $("join").hidden = false;
-  $("join-name").focus();
+  setJoinStep("join-start");
 }
 
-$("join").addEventListener("submit", async (e) => {
+function setJoinStep(step) {
+  for (const el of $("join").querySelectorAll(".join-step")) el.hidden = el.id !== step;
+  if (step === "join-new") $("join-name").focus();
+  if (step === "join-login") loadLoginNames();
+}
+
+$("join").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-mode]");
+  if (!b) return;
+  if (b.dataset.mode === "guest") {
+    storageSet("bingoGast", "1");
+    startGuest();
+  } else {
+    setJoinStep(b.dataset.mode);
+  }
+});
+
+async function loadLoginNames() {
+  const select = $("login-name");
+  $("login-msg").textContent = "";
+  select.innerHTML = `<option value="">Wird geladen …</option>`;
+  try {
+    const snap = await getDocs(collection(db, "boards"));
+    const boards = snap.docs.map((d) => ({ id: d.id, name: String(d.data().name ?? "?") }))
+      .sort((a, b) => a.name.localeCompare(b.name, "de"));
+    select.innerHTML = `<option value="">Bitte wählen …</option>` + boards
+      .map((b) => `<option value="${escapeHtml(b.id)}">${escapeHtml(b.name)}</option>`).join("");
+    if (!boards.length) $("login-msg").textContent = "Es spielt noch niemand mit.";
+  } catch (err) {
+    console.error(err);
+    select.innerHTML = `<option value="">–</option>`;
+    $("login-msg").textContent = "Die Spielerliste konnte nicht geladen werden. Bitte lade die Seite neu.";
+  }
+}
+
+$("join-new").addEventListener("submit", async (e) => {
   e.preventDefault();
   const name = $("join-name").value.replace(/\s+/g, " ").trim().slice(0, MAX_NAME_LENGTH);
+  const pin = $("join-pin").value.trim();
   if (!name) return;
+  if (!isValidPin(pin)) {
+    $("join-msg").textContent = PIN_FORMAT_MSG;
+    return;
+  }
   $("join-msg").textContent = "";
   $("join-btn").disabled = true;
   let code;
   try {
     const boards = await getDocs(collection(db, "boards"));
     if (boards.docs.some((d) => normalize(d.data().name) === normalize(name))) {
-      $("join-msg").textContent = `„${name}“ spielt schon mit. Nimm bitte einen anderen Namen, z. B. mit Nachnamen.`;
+      $("join-msg").textContent = `„${name}“ spielt schon mit. Bist du das? Dann geh zurück und wähle „Ich spiele schon mit“. Sonst nimm bitte einen anderen Namen.`;
       return;
     }
     const user = await ensureUser();
     code = makePlayerCode(name);
     const boardId = randomId();
-    // Feld, geheimer Spieler-Link und Verknüpfung mit diesem Browser in einem Rutsch
+    const key = await pinKey(boardId, pin);
+    // Feld, geheimer Spieler-Eintrag, Verknüpfung mit diesem Browser und PIN-Anmeldung in einem Rutsch
     const batch = writeBatch(db);
     batch.set(doc(db, "boards", boardId), { name, cells: emptyCells(), canAddWords: true });
-    batch.set(doc(db, "players", code), { name, boardId, uid: user.uid, invite });
+    batch.set(doc(db, "players", code), { name, boardId, uid: user.uid, invite, pinKey: key });
     batch.set(doc(db, "members", user.uid), { code, boardId });
+    batch.set(doc(db, "logins", key), { code, boardId });
     await batch.commit();
   } catch (err) {
     console.error(err);
@@ -181,22 +270,133 @@ $("join").addEventListener("submit", async (e) => {
     $("join-btn").disabled = false;
   }
 
+  enterGame(code, `Willkommen, ${name}! 🎉`);
+});
+
+$("join-login").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const boardId = $("login-name").value;
+  const pin = $("login-pin").value.trim();
+  const msg = $("login-msg");
+  if (!boardId) {
+    msg.textContent = "Bitte wähle deinen Namen aus.";
+    return;
+  }
+  if (!isValidPin(pin)) {
+    msg.textContent = PIN_FORMAT_MSG;
+    return;
+  }
+  msg.textContent = "";
+  $("login-btn").disabled = true;
+  let code;
+  try {
+    const snap = await getDoc(doc(db, "logins", await pinKey(boardId, pin)));
+    if (!snap.exists() || snap.data().boardId !== boardId) {
+      msg.textContent = "Die PIN stimmt nicht. Noch keine PIN? Dann lege sie auf deinem bisherigen Gerät unter „Mein Feld“ fest – oder frag die Spielleitung.";
+      return;
+    }
+    code = snap.data().code;
+  } catch (err) {
+    console.error(err);
+    msg.textContent = "Anmelden hat nicht geklappt. Bitte prüfe die Internetverbindung.";
+    return;
+  } finally {
+    $("login-btn").disabled = false;
+  }
+
+  const name = $("login-name").selectedOptions[0]?.textContent ?? "";
+  enterGame(code, `Willkommen zurück, ${name}! 🎄`);
+});
+
+function enterGame(code, greeting) {
   storageSet("bingoCode", code);
+  storageRemove("bingoGast");
   state.code = code;
   $("join").hidden = true;
   $("loading").hidden = false;
-  toast(`Willkommen, ${name}! 🎉 Speichere dir diese Seite als Lesezeichen.`, 6000);
+  toast(greeting, 5000);
   start().catch(onLoadError);
+}
+
+$("guest-leave").addEventListener("click", () => {
+  storageRemove("bingoGast");
+  location.reload();
 });
 
-$("my-link").addEventListener("click", async () => {
-  const link = personalLink();
-  try {
-    await navigator.clipboard.writeText(link);
-    toast("🔗 Dein Link ist kopiert. Damit kommst du auch auf anderen Geräten in dein Feld – nicht weitergeben!", 6000);
-  } catch {
-    prompt("Dein persönlicher Link (nicht weitergeben):", link);
+// ---------- PIN & Abmelden ----------
+
+function openPinDialog() {
+  $("pin-title").textContent = state.pinKey ? "PIN ändern" : "PIN festlegen";
+  $("pin-input").value = "";
+  $("pin-msg").textContent = "";
+  openOverlay($("pin-dialog"));
+  $("pin-input").focus();
+}
+
+function closePinDialog() {
+  closeOverlay($("pin-dialog"));
+}
+
+/** Neue PIN: Anmelde-Dokument anlegen, altes löschen, Schlüssel beim Spieler vermerken. */
+async function savePin(pin) {
+  const key = await pinKey(state.boardId, pin);
+  if (key === state.pinKey) return;
+  const batch = writeBatch(db);
+  batch.update(doc(db, "players", state.code), { pinKey: key });
+  batch.set(doc(db, "logins", key), { code: state.code, boardId: state.boardId });
+  if (state.pinKey) batch.delete(doc(db, "logins", state.pinKey));
+  await batch.commit();
+  state.pinKey = key;
+}
+
+$("pin-open").addEventListener("click", openPinDialog);
+$("pin-hint-btn").addEventListener("click", openPinDialog);
+$("pin-cancel").addEventListener("click", closePinDialog);
+$("pin-dialog").addEventListener("click", (e) => { if (e.target === $("pin-dialog")) closePinDialog(); });
+
+$("pin-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const pin = $("pin-input").value.trim();
+  if (!isValidPin(pin)) {
+    $("pin-msg").textContent = PIN_FORMAT_MSG;
+    return;
   }
+  if (!state.member) {
+    $("pin-msg").textContent = "Das geht gerade nicht. Lade die Seite bitte neu.";
+    return;
+  }
+  $("pin-save").disabled = true;
+  try {
+    await savePin(pin);
+    closePinDialog();
+    render();
+    toast("🔑 PIN gespeichert. Damit meldest du dich auf anderen Geräten an.", 5000);
+  } catch (err) {
+    console.error(err);
+    $("pin-msg").textContent = "Speichern hat nicht geklappt. Bitte nochmal versuchen.";
+  } finally {
+    $("pin-save").disabled = false;
+  }
+});
+
+$("logout").addEventListener("click", async () => {
+  const text = state.pinKey
+    ? "Auf diesem Gerät abmelden? Dein Feld bleibt erhalten. Wieder anmelden kannst du dich über den Einladungslink mit Name und PIN."
+    : "Du hast noch keine PIN festgelegt! Ohne PIN kommst du nach dem Abmelden nicht mehr selbst in dein Feld. Trotzdem abmelden?";
+  if (!confirm(text)) return;
+  try {
+    const user = getAuth(app).currentUser;
+    if (user) await deleteDoc(doc(db, "members", user.uid));
+  } catch (err) {
+    console.warn("Verknüpfung nicht gelöscht (egal):", err);
+  }
+  forgetCode();
+  storageRemove("bingoGast");
+  const savedInvite = storageGet("bingoEinladung");
+  const url = new URL(location.href);
+  url.search = savedInvite ? new URLSearchParams({ einladung: savedInvite }).toString() : "";
+  url.hash = "";
+  location.replace(url.toString());
 });
 
 function onLoadError(err) {
@@ -214,8 +414,8 @@ let firstRender = true;
 
 function render() {
   if (!state.boards || !state.dayDocs || !state.settings) return;
-  const board = me();
-  if (!board) {
+  const board = state.guest ? null : me();
+  if (!state.guest && !board) {
     forgetCode();
     showError("Du bist nicht mehr im Spiel, die Spielleitung hat dich entfernt. Bitte frag dort nach.");
     return;
@@ -227,12 +427,16 @@ function render() {
     $("game").hidden = false;
     tabs ??= initTabs($("tabs"), "bingoTab");
   }
-  $("greeting").textContent = `Hallo ${board.name}! ✨`;
+  $("greeting").textContent = board ? `Hallo ${board.name}! ✨` : "Hallo! Schön, dass du zuschaust ✨";
 
-  renderMine(board);
+  if (board) {
+    renderMine(board);
+    renderAccount();
+  }
   renderAll();
   renderCalendar();
   dayEditor.refresh();
+  songsView.refresh();
 
   if (locked() && state.editIndex !== null) closeEditor();
   firstRender = false;
@@ -302,6 +506,11 @@ function renderMine(board) {
   $("progress-fill").style.width = `${(score.hits / CELL_COUNT) * 100}%`;
 }
 
+function renderAccount() {
+  $("pin-hint").hidden = Boolean(state.pinKey);
+  $("pin-open").textContent = state.pinKey ? "🔑 PIN ändern" : "🔑 PIN festlegen";
+}
+
 const MEDALS = ["🥇", "🥈", "🥉"];
 
 function renderAll() {
@@ -325,10 +534,11 @@ function renderAll() {
 }
 
 function renderCalendar() {
-  const board = me();
-  if (!board) return;
-  $("calendar").innerHTML = calendarHtml(state.days, state.boards, { myCells: cellsOf(board) });
-  $("calendar-note").textContent = canAddWords(board) && state.member
+  if (!state.boards || !state.dayDocs) return;
+  const board = state.guest ? null : me();
+  if (!state.guest && !board) return;
+  $("calendar").innerHTML = calendarHtml(state.days, state.boards, { myCells: board ? cellsOf(board) : [] });
+  $("calendar-note").textContent = board && canAddWords(board) && state.member
     ? "Tippe auf ein Türchen, um die Wörter des Tages zu sehen oder einzutragen."
     : "Tippe auf ein Türchen, um die Wörter des Tages zu sehen.";
 }
@@ -362,6 +572,7 @@ $("calendar").addEventListener("click", (e) => {
   const n = Number(door.dataset.day);
   let note = "";
   if (!isDayOpen(n)) note = `🔒 Dieses Türchen öffnet sich am ${n}. Dezember.`;
+  else if (state.guest) return dayEditor.open(n, { canEdit: false });
   else if (!canAddWords(me())) note = "Du darfst gerade keine Tageswörter eintragen.";
   else if (!state.member) note = "Eintragen ist gerade nicht möglich. Lade die Seite bitte neu.";
   dayEditor.open(n, { canEdit: !note, note });
@@ -422,4 +633,8 @@ $("editor-form").addEventListener("submit", (e) => {
 $("editor-clear").addEventListener("click", () => saveCell(""));
 $("editor-cancel").addEventListener("click", closeEditor);
 $("editor").addEventListener("click", (e) => { if (e.target === $("editor")) closeEditor(); });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape" && state.editIndex !== null) closeEditor(); });
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (state.editIndex !== null) closeEditor();
+  else if (!$("pin-dialog").hidden) closePinDialog();
+});
