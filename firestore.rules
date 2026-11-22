@@ -2,201 +2,224 @@ rules_version = '2';
 
 // Sicherheitsregeln für das Weihnachtsbingo.
 // In der Firebase-Konsole unter Firestore Database > Regeln einfügen und "Veröffentlichen".
-// WICHTIG: Die UID in isAdmin() muss die deines Spielleiter-Kontos sein.
+//
+// Jeder Spieler hat ein Konto (Benutzername + Passwort). Jeder kann Spiele erstellen;
+// wer ein Spiel erstellt, ist dort die Spielleitung (owner).
 //
 // Aufbau:
-//   game/settings     { locked }                    Sperre der Felder
-//   game/invite       { code, open }                geheimer Einladungscode (nur Spielleiter liest ihn)
-//   players/{code}    { name, boardId, uid?, invite?, pinKey? } geheimer Spieler-Eintrag (nur per Code abrufbar)
-//   logins/{pinKey}   { code, boardId }             Anmeldung mit Name + PIN; Schlüssel = SHA-256(Feld + PIN)
-//   boards/{boardId}  { name, cells, canAddWords }  öffentliches Bingo-Feld, alle dürfen es sehen
-//   members/{uid}     { code, boardId }             verknüpft einen (anonym angemeldeten) Browser mit einem Spieler
-//   days/{1..24}      { words, updatedBy, updatedAt } Wörter des Adventskalenders
-//   songs/{songId}    { title, addedBy }            Liederpool (ID = Titel als Kürzel, verhindert Doppelte)
-//   songDays/{1..24}  { picked, random, updatedAt } Lieder eines Abends: picked = von Spielern ausgesucht
-//                                                   [{ title, by }], random = zufällig aufgefüllt [title]
+//   users/{uid}                  { name, games }                        eigenes Konto, Liste der eigenen Spiele
+//   games/{g}                    { name, owner, ownerName, locked, songsSeeded, createdAt }
+//   games/{g}/private/invite     { code, open }                         geheimer Einladungscode (nur Spielleitung)
+//   games/{g}/members/{uid}      { invite, joinedAt }                   Nachweis, dass man eingeladen wurde
+//   games/{g}/boards/{uid}       { name, cells, canAddWords }           öffentliches Bingo-Feld, ID = Konto
+//   games/{g}/days/{1..24}       { words, updatedBy, updatedAt }        Wörter des Adventskalenders
+//   games/{g}/songs/{songId}     { title, addedBy, addedByUid }         Liederpool (ID = Titel als Kürzel)
+//   games/{g}/songDays/{1..24}   { picked, random, updatedAt }          Lieder eines Abends:
+//                                  picked = von Spielern ausgesucht [{ title, by, uid }], random = [title]
+//
+// Wer die Spiel-ID kennt (steht im Einladungslink), darf das Spiel ansehen, auch ohne Konto.
+// Mitspielen kann nur, wer den gültigen Einladungscode hat.
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    function isAdmin() {
-      return request.auth != null && request.auth.uid == 'T0mHHroTerXRkcUytm1TyrNR6Sx1';
-    }
-
-    function isMember() {
-      return request.auth != null && exists(/databases/$(database)/documents/members/$(request.auth.uid));
-    }
-
-    function myBoardId() {
-      return get(/databases/$(database)/documents/members/$(request.auth.uid)).data.boardId;
-    }
-
     function signedIn() {
       return request.auth != null;
     }
 
-    // Beitritt per Einladungslink: Code muss stimmen und Beitritt muss offen sein
-    function validInvite(inviteCode) {
-      let inv = get(/databases/$(database)/documents/game/invite).data;
-      return inviteCode is string && inv.get('open', false) == true && inv.code == inviteCode;
+    function gamePath(g) {
+      return /databases/$(database)/documents/games/$(g);
     }
 
-    function fieldsLocked() {
-      return get(/databases/$(database)/documents/game/settings).data.get('locked', false) == true;
+    function boardPath(g, uid) {
+      return /databases/$(database)/documents/games/$(g)/boards/$(uid);
     }
 
-    // Spieleinstellungen (Sperre): alle lesen, nur Spielleiter schreibt
-    match /game/settings {
-      allow read: if true;
-      allow write: if isAdmin();
+    // Spielleitung (Stand vor dem Schreiben)
+    function isOwner(g) {
+      return signedIn() && exists(gamePath(g)) && get(gamePath(g)).data.owner == request.auth.uid;
     }
 
-    // Einladungscode: nur Spielleiter (die Regeln selbst dürfen ihn trotzdem prüfen)
-    match /game/invite {
-      allow read, write: if isAdmin();
+    // Spielleitung, auch wenn das Spiel im selben Batch gerade erst angelegt wird
+    function isOwnerAfter(g) {
+      return signedIn() && existsAfter(gamePath(g)) && getAfter(gamePath(g)).data.owner == request.auth.uid;
     }
 
-    // Geheime Spieler-Links: Wer den Code kennt, darf genau dieses Dokument lesen.
-    // Auflisten (und damit alle Codes sehen) darf nur der Spielleiter.
-    match /players/{code} {
-      allow get: if true;
-      allow list, delete: if isAdmin();
-      // Der Spieler selbst darf nur seine PIN (pinKey) ändern
-      allow update: if isAdmin() || (
-        isMember()
-        && get(/databases/$(database)/documents/members/$(request.auth.uid)).data.code == code
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['pinKey'])
-        && request.resource.data.pinKey is string
-      );
-      // Selbst beitreten: zusammen mit Feld und members-Eintrag in einem Rutsch anlegen
-      allow create: if isAdmin() || (
-        signedIn()
-        && code.matches('^[a-z0-9-]{4,64}$')
-        && request.resource.data.keys().hasOnly(['name', 'boardId', 'uid', 'invite', 'pinKey'])
-        && request.resource.data.uid == request.auth.uid
-        && validInvite(request.resource.data.invite)
-        && getAfter(/databases/$(database)/documents/boards/$(request.resource.data.boardId)).data.name == request.resource.data.name
-        && getAfter(/databases/$(database)/documents/members/$(request.auth.uid)).data.code == code
-      );
+    // Spielt mit (hat ein Feld in diesem Spiel)
+    function isPlayer(g) {
+      return signedIn() && exists(boardPath(g, request.auth.uid));
     }
 
-    // Öffentliche Felder: alle sehen alle. Ein Spieler darf nur die 25 Wörter
-    // seines eigenen Feldes ändern, und das nur, solange nicht gesperrt ist.
-    match /boards/{boardId} {
-      allow read: if true;
-      allow delete: if isAdmin();
-      // Neues, leeres Feld beim Beitritt (der Spieler-Eintrag prüft den Einladungscode).
-      // Wer neu beitritt, darf erst einmal Tageswörter eintragen.
-      allow create: if isAdmin() || (
-        signedIn()
-        && request.resource.data.keys().hasOnly(['name', 'cells', 'canAddWords'])
+    function myBoard(g) {
+      return get(boardPath(g, request.auth.uid)).data;
+    }
+
+    function fieldsLocked(g) {
+      return get(gamePath(g)).data.get('locked', false) == true;
+    }
+
+    function validInvite(g, code) {
+      let inv = get(/databases/$(database)/documents/games/$(g)/private/invite).data;
+      return code is string && inv.get('open', false) == true && inv.code == code;
+    }
+
+    function validGameName(name) {
+      return name is string && name.size() >= 1 && name.size() <= 40;
+    }
+
+    function validDay(day) {
+      return day.matches('^([1-9]|1[0-9]|2[0-4])$');
+    }
+
+    // Alle Einträge (höchstens 3) gehören dem angemeldeten Spieler
+    function allMine(list) {
+      return list.size() <= 3
+        && (list.size() < 1 || list[0].get('uid', '') == request.auth.uid)
+        && (list.size() < 2 || list[1].get('uid', '') == request.auth.uid)
+        && (list.size() < 3 || list[2].get('uid', '') == request.auth.uid);
+    }
+
+    // ---------- Konten ----------
+
+    match /users/{userId} {
+      allow read, delete: if signedIn() && request.auth.uid == userId;
+      allow create: if signedIn() && request.auth.uid == userId
+        && request.resource.data.keys().hasOnly(['name', 'games'])
         && request.resource.data.name is string
-        && request.resource.data.name.size() >= 1
+        && request.resource.data.name.size() >= 2
         && request.resource.data.name.size() <= 30
-        && request.resource.data.canAddWords == true
-        && request.resource.data.cells == ['', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
-        && getAfter(/databases/$(database)/documents/members/$(request.auth.uid)).data.boardId == boardId
-        && getAfter(/databases/$(database)/documents/players/$(getAfter(/databases/$(database)/documents/members/$(request.auth.uid)).data.code)).data.boardId == boardId
-      );
-      allow update: if isAdmin() || (
-        isMember()
-        && myBoardId() == boardId
-        && !fieldsLocked()
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['cells'])
-        && request.resource.data.cells is list
-        && request.resource.data.cells.size() == 25
-      );
+        && request.resource.data.games is list
+        && request.resource.data.games.size() == 0;
+      // Der Name bleibt fest, nur die Liste der Spiele ändert sich
+      allow update: if signedIn() && request.auth.uid == userId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['games'])
+        && request.resource.data.games is list
+        && request.resource.data.games.size() <= 50;
     }
 
-    // Ein Browser weist sich als Spieler aus, indem er den geheimen Code kennt.
-    match /members/{uid} {
-      // Der Spielleiter darf alle auflisten (zum Zurücksetzen des Spiels)
-      allow read: if isAdmin() || (request.auth != null && request.auth.uid == uid);
-      allow delete: if isAdmin() || (request.auth != null && request.auth.uid == uid);
-      allow create, update: if request.auth != null && request.auth.uid == uid
-        && request.resource.data.keys().hasOnly(['code', 'boardId'])
-        && request.resource.data.code is string
-        && request.resource.data.code.matches('^[a-z0-9-]{4,64}$')
-        && getAfter(/databases/$(database)/documents/players/$(request.resource.data.code)).data.boardId == request.resource.data.boardId;
-    }
+    // ---------- Spiele ----------
 
-    // Anmeldung mit Name + PIN: Wer Feld und PIN kennt, kennt den Schlüssel und darf genau
-    // dieses Dokument lesen (und erfährt so seinen Spieler-Code). Auflisten nur Spielleiter.
-    // Anlegen nur für den eigenen Spieler und nur mit dem Schlüssel, der beim Spieler steht.
-    match /logins/{key} {
+    match /games/{g} {
+      // Ansehen darf jeder, der die ID kennt. Auflisten aller Spiele darf niemand.
       allow get: if true;
-      allow list: if isAdmin();
-      allow create: if isAdmin() || (
-        signedIn()
-        && key.matches('^[0-9a-f]{64}$')
-        && request.resource.data.keys().hasOnly(['code', 'boardId'])
-        && request.resource.data.code is string
-        && getAfter(/databases/$(database)/documents/members/$(request.auth.uid)).data.code == request.resource.data.code
-        && getAfter(/databases/$(database)/documents/players/$(request.resource.data.code)).data.pinKey == key
-        && getAfter(/databases/$(database)/documents/players/$(request.resource.data.code)).data.boardId == request.resource.data.boardId
-      );
-      allow delete: if isAdmin() || (
-        isMember()
-        && get(/databases/$(database)/documents/members/$(request.auth.uid)).data.code == resource.data.code
-      );
-    }
+      allow list: if false;
+      allow create: if signedIn()
+        && g.matches('^[a-z0-9]{16,32}$')
+        && request.resource.data.keys().hasOnly(['name', 'owner', 'ownerName', 'locked', 'songsSeeded', 'createdAt'])
+        && request.resource.data.owner == request.auth.uid
+        && validGameName(request.resource.data.name)
+        && request.resource.data.ownerName is string
+        && request.resource.data.ownerName.size() <= 30
+        && request.resource.data.locked == false
+        && request.resource.data.get('songsSeeded', false) is bool
+        && request.resource.data.createdAt == request.time;
+      allow update: if signedIn() && resource.data.owner == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'locked', 'songsSeeded'])
+        && validGameName(request.resource.data.name)
+        && request.resource.data.locked is bool
+        && request.resource.data.songsSeeded is bool;
+      allow delete: if signedIn() && resource.data.owner == request.auth.uid;
 
-    // Adventskalender: alle lesen. Spielleiter darf alles, Spieler mit Berechtigung
-    // dürfen die Wörter eines Tages eintragen und ändern.
-    match /days/{day} {
-      allow read: if true;
-      allow delete: if isAdmin();
-      allow create, update: if day.matches('^([1-9]|1[0-9]|2[0-4])$') && (isAdmin() || (
-        isMember()
-        && get(/databases/$(database)/documents/boards/$(myBoardId())).data.get('canAddWords', true) == true
-        && request.resource.data.keys().hasOnly(['words', 'updatedBy', 'updatedAt'])
-        && request.resource.data.words is list
-        && request.resource.data.words.size() <= 12
-        && request.resource.data.updatedBy is string
-        && request.resource.data.updatedAt == request.time
-      ));
-    }
+      // Einladungscode: nur die Spielleitung (die Regeln selbst dürfen ihn trotzdem prüfen)
+      match /private/{docId} {
+        allow read, delete: if isOwner(g);
+        allow create, update: if docId == 'invite' && isOwnerAfter(g)
+          && request.resource.data.keys().hasOnly(['code', 'open'])
+          && request.resource.data.code is string
+          && request.resource.data.code.size() >= 12
+          && request.resource.data.open is bool;
+      }
 
-    // Liederpool: alle lesen, Spieler dürfen Lieder ergänzen, nur der Spielleiter entfernt welche.
-    match /songs/{songId} {
-      allow read: if true;
-      allow update, delete: if isAdmin();
-      allow create: if isAdmin() || (
-        isMember()
-        && songId.matches('^[a-z0-9-]{1,80}$')
-        && request.resource.data.keys().hasOnly(['title', 'addedBy'])
-        && request.resource.data.title is string
-        && request.resource.data.title.size() >= 1
-        && request.resource.data.title.size() <= 60
-        && request.resource.data.addedBy is string
-        && request.resource.data.addedBy.size() <= 30
-      );
-    }
+      // Nachweis der Einladung: wird zusammen mit dem Feld angelegt
+      match /members/{uid} {
+        allow read, delete: if signedIn() && (request.auth.uid == uid || isOwner(g));
+        allow create: if signedIn() && request.auth.uid == uid
+          && request.resource.data.keys().hasOnly(['invite', 'joinedAt'])
+          && request.resource.data.joinedAt == request.time
+          && validInvite(g, request.resource.data.invite)
+          && existsAfter(boardPath(g, uid));
+      }
 
-    // Lieder eines Abends: höchstens 3. Spieler dürfen Zufallslieder austauschen,
-    // aber keine von Spielern ausgesuchten Lieder entfernen (das darf nur der Spielleiter).
-    function validSongDay() {
-      let d = request.resource.data;
-      return d.keys().hasOnly(['picked', 'random', 'updatedAt'])
-        && d.picked is list
-        && d.random is list
-        && d.picked.size() + d.random.size() <= 3
-        && d.updatedAt == request.time;
-    }
+      // Bingo-Felder: alle sehen alle. Jeder ändert nur die 25 Wörter seines eigenen Feldes,
+      // und das nur, solange nicht gesperrt ist. Die Spielleitung vergibt das Recht für Tageswörter.
+      match /boards/{uid} {
+        allow read: if true;
+        allow create: if signedIn() && request.auth.uid == uid
+          && request.resource.data.keys().hasOnly(['name', 'cells', 'canAddWords'])
+          && request.resource.data.name == get(/databases/$(database)/documents/users/$(uid)).data.name
+          && request.resource.data.canAddWords == true
+          && request.resource.data.cells == ['', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+          // Spielleitung (beim Erstellen des Spiels) oder mit gültiger Einladung (members-Eintrag im selben Batch)
+          && (isOwnerAfter(g) || existsAfter(/databases/$(database)/documents/games/$(g)/members/$(uid)));
+        allow update: if signedIn() && (
+          (
+            request.auth.uid == uid
+            && !fieldsLocked(g)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['cells'])
+            && request.resource.data.cells is list
+            && request.resource.data.cells.size() == 25
+          ) || (
+            isOwner(g)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['canAddWords'])
+            && request.resource.data.canAddWords is bool
+          )
+        );
+        // Selbst verlassen oder von der Spielleitung entfernt werden
+        allow delete: if signedIn() && (request.auth.uid == uid || isOwner(g));
+      }
 
-    match /songDays/{day} {
-      allow read: if true;
-      allow delete: if isAdmin();
-      allow create: if day.matches('^([1-9]|1[0-9]|2[0-4])$') && (isAdmin() || (isMember() && validSongDay()));
-      allow update: if day.matches('^([1-9]|1[0-9]|2[0-4])$') && (isAdmin() || (
-        isMember()
-        && validSongDay()
-        && request.resource.data.picked.hasAll(resource.data.picked)
-      ));
-    }
+      // Adventskalender: alle lesen. Spielleitung und Spieler mit Berechtigung tragen Wörter ein.
+      match /days/{day} {
+        allow read: if true;
+        allow delete: if isOwner(g);
+        allow create, update: if validDay(day)
+          && (isOwner(g) || (isPlayer(g) && myBoard(g).get('canAddWords', true) == true))
+          && request.resource.data.keys().hasOnly(['words', 'updatedBy', 'updatedAt'])
+          && request.resource.data.words is list
+          && request.resource.data.words.size() <= 12
+          && request.resource.data.updatedBy is string
+          && request.resource.data.updatedAt == request.time;
+      }
 
-    // Altes Format (wird beim ersten Öffnen der Spielleiter-Seite übernommen)
-    match /draws/{drawId} {
-      allow read, write: if isAdmin();
+      // Liederpool: alle lesen, Spieler ergänzen Lieder. Entfernen darf, wer das Lied
+      // ergänzt hat, und die Spielleitung.
+      match /songs/{songId} {
+        allow read: if true;
+        allow update: if false;
+        allow delete: if signedIn() && (resource.data.get('addedByUid', '') == request.auth.uid || isOwner(g));
+        allow create: if (isOwnerAfter(g) || isPlayer(g))
+          && songId.matches('^[a-z0-9-]{1,80}$')
+          && request.resource.data.keys().hasOnly(['title', 'addedBy', 'addedByUid'])
+          && request.resource.data.title is string
+          && request.resource.data.title.size() >= 1
+          && request.resource.data.title.size() <= 60
+          && request.resource.data.addedBy is string
+          && request.resource.data.addedBy.size() <= 30
+          && request.resource.data.addedByUid == request.auth.uid;
+      }
+
+      // Lieder eines Abends: höchstens 3. Spieler dürfen Zufallslieder austauschen und ihre
+      // eigenen ausgesuchten Lieder hinzufügen oder entfernen, aber nicht die von anderen.
+      function validSongDay() {
+        let d = request.resource.data;
+        return d.keys().hasOnly(['picked', 'random', 'updatedAt'])
+          && d.picked is list
+          && d.random is list
+          && d.picked.size() + d.random.size() <= 3
+          && d.updatedAt == request.time;
+      }
+
+      match /songDays/{day} {
+        allow read: if true;
+        allow delete: if isOwner(g);
+        allow create: if validDay(day) && validSongDay()
+          && (isOwner(g) || (isPlayer(g) && allMine(request.resource.data.picked)));
+        allow update: if validDay(day) && validSongDay() && (isOwner(g) || (
+          isPlayer(g)
+          // entfernte und neu hinzugekommene ausgesuchte Lieder müssen alle die eigenen sein
+          && allMine(resource.data.picked.removeAll(request.resource.data.picked))
+          && allMine(request.resource.data.picked.removeAll(resource.data.picked))
+        ));
+      }
     }
   }
 }

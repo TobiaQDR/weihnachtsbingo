@@ -15,7 +15,20 @@ function storageGet(key) {
 function storageSet(key, value) {
   try { localStorage.setItem(key, value); } catch { /* egal */ }
 }
-export { storageGet, storageSet };
+function storageRemove(key) {
+  try { localStorage.removeItem(key); } catch { /* egal */ }
+}
+export { storageGet, storageSet, storageRemove };
+
+/** Text in die Zwischenablage, notfalls zum Abschreiben anzeigen. */
+export async function copyText(text, done = "🔗 Link kopiert.") {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(done);
+  } catch {
+    prompt("Zum Kopieren:", text);
+  }
+}
 
 // ---------- Toast ----------
 
@@ -37,22 +50,28 @@ export function toast(text, ms = 3500) {
 
 // ---------- Tabs ----------
 
-/** Tab-Leiste mit gleitendem Indikator. Merkt sich den zuletzt offenen Tab. */
+/**
+ * Tab-Leiste mit gleitendem Indikator. Merkt sich den zuletzt offenen Tab.
+ * Reiter mit `hidden` zählen nicht mit; nach dem Ein- oder Ausblenden `refresh()` aufrufen.
+ */
 export function initTabs(nav, storageKey, onChange = () => {}) {
-  const buttons = [...nav.querySelectorAll("[data-tab]")];
-  nav.style.setProperty("--count", buttons.length);
-  const views = new Map(buttons.map((b) => [b.dataset.tab, document.querySelector(`[data-view="${b.dataset.tab}"]`)]));
+  const all = [...nav.querySelectorAll("[data-tab]")];
+  const viewOf = (name) => document.querySelector(`[data-view="${name}"]`);
+  let current = null;
 
   function show(name, animate = true) {
+    const buttons = all.filter((b) => !b.hidden);
+    if (!buttons.length) return;
     const idx = Math.max(0, buttons.findIndex((b) => b.dataset.tab === name));
     name = buttons[idx].dataset.tab;
+    nav.style.setProperty("--count", buttons.length);
     nav.style.setProperty("--idx", idx);
-    buttons.forEach((b, i) => {
-      b.classList.toggle("active", i === idx);
-      b.setAttribute("aria-selected", String(i === idx));
-    });
-    for (const [key, view] of views) {
-      const active = key === name;
+    for (const b of all) {
+      const active = b.dataset.tab === name;
+      b.classList.toggle("active", active);
+      b.setAttribute("aria-selected", String(active));
+      const view = viewOf(b.dataset.tab);
+      if (!view) continue;
       if (active && view.hidden) {
         view.hidden = false;
         if (animate && !reducedMotion()) {
@@ -67,6 +86,7 @@ export function initTabs(nav, storageKey, onChange = () => {}) {
       }
     }
     storageSet(storageKey, name);
+    current = name;
     onChange(name);
   }
 
@@ -75,8 +95,149 @@ export function initTabs(nav, storageKey, onChange = () => {}) {
     if (b) show(b.dataset.tab);
   });
 
-  show(storageGet(storageKey) || buttons[0].dataset.tab, false);
-  return { show };
+  show(storageGet(storageKey) || all[0].dataset.tab, false);
+  return {
+    show,
+    /** Nach dem Ein- oder Ausblenden von Reitern: aktuellen Reiter behalten, wenn er noch da ist. */
+    refresh: () => show(current ?? storageGet(storageKey), false),
+  };
+}
+
+// ---------- Passwort-Felder ----------
+
+/** Auge-Knopf neben Passwort-Feldern (`.pw-field`): zeigt das Passwort an oder verbirgt es wieder. */
+export function initPasswordToggles(root = document) {
+  root.addEventListener("click", (e) => {
+    const btn = e.target.closest(".pw-toggle");
+    if (!btn) return;
+    const input = btn.closest(".pw-field")?.querySelector("input");
+    if (!input) return;
+    setPasswordVisible(btn.closest(".pw-field"), input.type === "password");
+    input.focus();
+  });
+}
+
+function setPasswordVisible(field, show) {
+  const input = field.querySelector("input");
+  const btn = field.querySelector(".pw-toggle");
+  if (input) input.type = show ? "text" : "password";
+  if (btn) {
+    btn.textContent = show ? "🙈" : "👁️";
+    btn.setAttribute("aria-label", show ? "Passwort verbergen" : "Passwort anzeigen");
+    btn.setAttribute("aria-pressed", String(show));
+  }
+}
+
+/** Alle Passwort-Felder in `root` wieder verbergen und leeren (z. B. beim Öffnen eines Dialogs). */
+export function resetPasswords(root) {
+  for (const field of root.querySelectorAll(".pw-field")) {
+    setPasswordVisible(field, false);
+    field.querySelector("input").value = "";
+  }
+}
+
+// ---------- Drag & Drop im Bingo-Feld ----------
+
+/**
+ * Felder per Ziehen tauschen. Mit der Maus sofort, auf dem Handy nach kurzem Gedrückthalten
+ * (sonst könnte man über dem Feld nicht mehr scrollen).
+ * @param grid     Container mit `.cell`-Knöpfen (data-i)
+ * @param canDrag  () => boolean
+ * @param onSwap   (from, to) => void
+ * @returns { wasDrag } – wasDrag() ist direkt nach einem Ziehen true (dann den Klick ignorieren)
+ */
+export function enableCellDrag(grid, { canDrag, onSwap }) {
+  const LONG_PRESS_MS = 280;
+  const MOVE_TOLERANCE = 8;
+  let d = null; // laufender Zug
+  let suppressClick = false;
+
+  const cellAt = (x, y) => {
+    const el = document.elementFromPoint(x, y)?.closest(".cell");
+    return el && grid.contains(el) && !el.disabled ? el : null;
+  };
+
+  function begin() {
+    d.active = true;
+    const rect = d.cell.getBoundingClientRect();
+    const ghost = d.cell.cloneNode(true);
+    ghost.classList.add("drag-ghost");
+    ghost.classList.remove("pop", "dragging", "drop-target");
+    ghost.removeAttribute("data-i");
+    ghost.setAttribute("aria-hidden", "true");
+    Object.assign(ghost.style, {
+      width: `${rect.width}px`, height: `${rect.height}px`, left: `${rect.left}px`, top: `${rect.top}px`,
+    });
+    document.body.append(ghost);
+    d.ghost = ghost;
+    d.cell.classList.add("dragging");
+    grid.classList.add("drag-active");
+    if (d.touch && navigator.vibrate) navigator.vibrate(15);
+    move(d.lastX, d.lastY);
+  }
+
+  function move(x, y) {
+    d.ghost.style.transform = `translate(${x - d.startX}px, ${y - d.startY}px) scale(1.08) rotate(-3deg)`;
+    const target = cellAt(x, y);
+    const next = target && target !== d.cell ? target : null;
+    if (next !== d.target) {
+      d.target?.classList.remove("drop-target");
+      next?.classList.add("drop-target");
+      d.target = next;
+    }
+  }
+
+  function finish(commit) {
+    if (!d) return;
+    clearTimeout(d.timer);
+    const { active, cell, target, ghost } = d;
+    d = null;
+    grid.classList.remove("drag-active");
+    cell.classList.remove("dragging");
+    target?.classList.remove("drop-target");
+    ghost?.remove();
+    if (active) {
+      // Der Klick nach dem Loslassen soll keinen Eingabedialog öffnen
+      suppressClick = true;
+      setTimeout(() => { suppressClick = false; }, 50);
+      if (commit && target) onSwap(Number(cell.dataset.i), Number(target.dataset.i));
+    }
+  }
+
+  grid.addEventListener("pointerdown", (e) => {
+    if (d || e.button > 0 || !canDrag()) return;
+    const cell = e.target.closest(".cell");
+    if (!cell || cell.disabled) return;
+    const touch = e.pointerType !== "mouse";
+    d = {
+      cell, pointerId: e.pointerId, touch, active: false, target: null,
+      startX: e.clientX, startY: e.clientY, lastX: e.clientX, lastY: e.clientY,
+    };
+    if (touch) d.timer = setTimeout(() => { if (d && !d.active) begin(); }, LONG_PRESS_MS);
+  });
+
+  window.addEventListener("pointermove", (e) => {
+    if (!d || e.pointerId !== d.pointerId) return;
+    d.lastX = e.clientX;
+    d.lastY = e.clientY;
+    if (!d.active) {
+      if (Math.hypot(e.clientX - d.startX, e.clientY - d.startY) < MOVE_TOLERANCE) return;
+      if (d.touch) return finish(false); // vor dem Gedrückthalten bewegt: der Nutzer will scrollen
+      begin();
+    }
+    move(e.clientX, e.clientY);
+  });
+
+  // Während des Ziehens auf dem Handy nicht scrollen
+  grid.addEventListener("touchmove", (e) => { if (d?.active) e.preventDefault(); }, { passive: false });
+  // Langes Drücken soll kein Kontextmenü öffnen
+  grid.addEventListener("contextmenu", (e) => { if (d) e.preventDefault(); });
+
+  window.addEventListener("pointerup", (e) => { if (d && e.pointerId === d.pointerId) finish(true); });
+  window.addEventListener("pointercancel", (e) => { if (d && e.pointerId === d.pointerId) finish(false); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && d) finish(false); });
+
+  return { wasDrag: () => suppressClick };
 }
 
 // ---------- Schnee ----------

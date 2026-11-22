@@ -1,9 +1,8 @@
-// Weihnachtslieder: Liederpool und bis zu 3 Lieder pro Adventsabend.
-// Wird von Spieler- und Spielleiter-Seite gemeinsam benutzt.
+// Weihnachtslieder: Liederpool und bis zu 3 Lieder pro Adventsabend – je Spiel.
 //
-//   songs/{songId}    { title, addedBy }               Liederpool, ID = songId(title)
-//   songDays/{1..24}  { picked, random, updatedAt }    picked: [{ title, by }] von Spielern gewählt
-//                                                       random: [title] zufällig aufgefüllt
+//   games/{g}/songs/{songId}    { title, addedBy, addedByUid }  Liederpool, ID = songId(title)
+//   games/{g}/songDays/{1..24}  { picked, random, updatedAt }   picked: [{ title, by, uid }] von Spielern gewählt
+//                                                                random: [title] zufällig aufgefüllt
 
 import {
   doc, collection, onSnapshot, setDoc, deleteDoc, runTransaction, writeBatch, serverTimestamp,
@@ -54,11 +53,17 @@ export const DEFAULT_SONGS = [
   "Zu Bethlehem geboren",
 ];
 
-/** Startbestand in einen Batch schreiben. */
-export function addDefaultSongs(batch) {
+/**
+ * Liederpool eines neuen Spiels mit den klassischen Liedern füllen (nur die Spielleitung).
+ * Merkt sich das am Spiel (songsSeeded), damit gelöschte Lieder nicht wiederkommen.
+ */
+export async function seedDefaultSongs(gameId, uid) {
+  const batch = writeBatch(db);
   for (const title of DEFAULT_SONGS) {
-    batch.set(doc(db, "songs", songId(title)), { title, addedBy: "Spielleitung" });
+    batch.set(doc(db, "games", gameId, "songs", songId(title)), { title, addedBy: "Spielleitung", addedByUid: uid });
   }
+  batch.update(doc(db, "games", gameId), { songsSeeded: true });
+  await batch.commit();
 }
 
 /** Fehler mit Text für den Nutzer. */
@@ -74,13 +79,14 @@ function initialDay(now = new Date()) {
 /**
  * Reiter „Lieder“.
  * @param opts.root     Element, in das gezeichnet wird
- * @param opts.admin    Spielleitung: darf Lieder aus Pool und Tagen entfernen
- * @param opts.getUser  () => { name, canEdit, note } – wer gerade schreibt und ob er darf
+ * @param opts.getUser  () => { name, uid, canEdit, isOwner, note } – wer gerade schreibt und was er darf.
+ *                      Die Spielleitung (isOwner) darf alle Lieder entfernen, Spieler nur ihre eigenen.
  * @param opts.onChange () => void – nach jedem Update der Lieder (z. B. Kalender neu zeichnen)
  */
-export function createSongsView({ root, admin = false, getUser, onChange = () => {} }) {
+export function createSongsView({ root, getUser, onChange = () => {} }) {
   const st = {
-    pool: null,          // [{ id, title, addedBy }]
+    gameId: null,
+    pool: null,          // [{ id, title, addedBy, addedByUid }]
     days: null,          // Map Tag → { picked, random }
     day: initialDay(),
     busy: false,
@@ -89,9 +95,9 @@ export function createSongsView({ root, admin = false, getUser, onChange = () =>
 
   root.innerHTML = `
     <p class="intro-text">Jeden Abend singen wir bis zu ${SONGS_PER_DAY} Weihnachtslieder 🎶</p>
-    ${admin ? `<div class="center fill-all-row">
+    <div class="center fill-all-row" data-fill-all-row hidden>
       <button type="button" class="btn" data-fill-all>🎲 Alle Abende zufällig auffüllen</button>
-    </div>` : ""}
+    </div>
     <section class="card songs-card">
       <div class="song-days" data-days></div>
       <div class="dd-head">
@@ -124,21 +130,38 @@ export function createSongsView({ root, admin = false, getUser, onChange = () =>
     </section>`;
 
   const q = (sel) => root.querySelector(sel);
-  const user = () => getUser() ?? { name: "", canEdit: false, note: "" };
+  const user = () => getUser() ?? { name: "", uid: "", canEdit: false, isOwner: false, note: "" };
   const poolTitles = () => (st.pool ?? []).map((s) => s.title);
   const dayOf = (n) => st.days?.get(n) ?? { picked: [], random: [] };
+  const col = (name) => collection(db, "games", st.gameId, name);
+  const ref = (name, id) => doc(db, "games", st.gameId, name, String(id));
+  /** Darf der Nutzer dieses ausgesuchte Lied bzw. dieses Pool-Lied entfernen? */
+  const mayRemovePicked = (u, p) => u.canEdit && (u.isOwner || (u.uid && p.uid === u.uid));
+  const mayRemovePool = (u, s) => u.canEdit && (u.isOwner || (u.uid && s.addedByUid === u.uid));
 
   // ---------- Daten ----------
 
-  function start() {
-    const offPool = onSnapshot(collection(db, "songs"), (s) => {
-      st.pool = s.docs.map((d) => ({ id: d.id, title: String(d.data().title ?? ""), addedBy: String(d.data().addedBy ?? "") }))
+  /** Lieder eines Spiels abonnieren. Gibt eine Funktion zum Abbestellen zurück. */
+  function start(gameId) {
+    st.gameId = gameId;
+    st.pool = null;
+    st.days = null;
+    st.listKey = "";
+    st.day = initialDay();
+    q("[data-note]").hidden = true;
+    const offPool = onSnapshot(col("songs"), (s) => {
+      st.pool = s.docs.map((d) => ({
+        id: d.id,
+        title: String(d.data().title ?? ""),
+        addedBy: String(d.data().addedBy ?? ""),
+        addedByUid: String(d.data().addedByUid ?? ""),
+      }))
         .filter((x) => x.title.trim())
         .sort((a, b) => a.title.localeCompare(b.title, "de"));
       render();
       onChange();
     }, onError);
-    const offDays = onSnapshot(collection(db, "songDays"), (s) => {
+    const offDays = onSnapshot(col("songDays"), (s) => {
       st.days = new Map(s.docs.map((d) => [Number(d.id), songDayOf(d.data())]));
       render();
       onChange();
@@ -172,10 +195,10 @@ export function createSongsView({ root, admin = false, getUser, onChange = () =>
     render();
     try {
       await runTransaction(db, async (tx) => {
-        const ref = doc(db, "songDays", String(n));
-        const cur = songDayOf((await tx.get(ref)).data());
+        const dayRef = ref("songDays", n);
+        const cur = songDayOf((await tx.get(dayRef)).data());
         const next = fn(cur);
-        tx.set(ref, { picked: next.picked, random: next.random, updatedAt: serverTimestamp() });
+        tx.set(dayRef, { picked: next.picked, random: next.random, updatedAt: serverTimestamp() });
       });
       if (successText) toast(successText);
     } catch (err) {
@@ -191,12 +214,12 @@ export function createSongsView({ root, admin = false, getUser, onChange = () =>
   }
 
   function addToDay(title) {
-    const name = user().name;
+    const { name, uid } = user();
     const id = songId(title);
     changeDay(st.day, (cur) => {
       if (cur.picked.some((p) => songId(p.title) === id)) throw new SongError("Das Lied ist an diesem Abend schon ausgesucht.");
       if (cur.picked.length >= SONGS_PER_DAY) throw new SongError(`An diesem Abend sind schon ${SONGS_PER_DAY} Lieder ausgesucht.`);
-      const picked = [...cur.picked, { title, by: name }];
+      const picked = [...cur.picked, { title, by: name, uid }];
       // Ein Zufallslied mit demselben Titel wird zum ausgesuchten, sonst fliegt das letzte Zufallslied raus
       let random = cur.random.filter((t) => songId(t) !== id);
       random = random.slice(0, Math.max(0, SONGS_PER_DAY - picked.length));
@@ -245,7 +268,7 @@ export function createSongsView({ root, admin = false, getUser, onChange = () =>
       });
       if (!add.length) continue;
       for (const t of add) used.set(songId(t), (used.get(songId(t)) ?? 0) + 1);
-      batch.set(doc(db, "songDays", String(n)), {
+      batch.set(ref("songDays", n), {
         picked: cur.picked, random: [...cur.random, ...add], updatedAt: serverTimestamp(),
       });
       changed++;
@@ -275,7 +298,8 @@ export function createSongsView({ root, admin = false, getUser, onChange = () =>
       return false;
     }
     try {
-      await setDoc(doc(db, "songs", id), { title, addedBy: user().name });
+      const { name, uid } = user();
+      await setDoc(ref("songs", id), { title, addedBy: name, addedByUid: uid });
       toast(`📖 „${title}“ ist jetzt im Liederpool.`);
       return true;
     } catch (err) {
@@ -289,7 +313,7 @@ export function createSongsView({ root, admin = false, getUser, onChange = () =>
     const song = st.pool?.find((s) => s.id === id);
     if (!song || !confirm(`„${song.title}“ aus dem Liederpool entfernen? An Abenden, an denen es schon steht, bleibt es stehen.`)) return;
     try {
-      await deleteDoc(doc(db, "songs", id));
+      await deleteDoc(ref("songs", id));
       toast(`„${song.title}“ entfernt.`);
     } catch (err) {
       console.error(err);
@@ -325,18 +349,19 @@ export function createSongsView({ root, admin = false, getUser, onChange = () =>
     q("[data-meta]").textContent = `${isToday(n) ? "Heute · " : ""}${total} von ${SONGS_PER_DAY} Liedern`;
 
     // Liederliste (nur neu zeichnen, wenn sich etwas geändert hat – sonst hüpfen die Einträge bei jedem Update)
-    const key = JSON.stringify([n, picked, random, admin && u.canEdit]);
+    const key = JSON.stringify([n, picked, random, u.canEdit, u.isOwner, u.uid]);
     if (key !== st.listKey) {
       st.listKey = key;
-      const item = (kind, title, tag, i) => `<li class="song ${kind}" style="--i:${i}">
+      const item = (kind, title, tag, i, removable) => `<li class="song ${kind}" style="--i:${i}">
           <span class="song-title">${escapeHtml(title)}</span>
           <span class="song-tag">${tag}</span>
-          ${admin ? `<button type="button" class="icon-btn danger" data-remove="${kind}" data-title="${escapeHtml(title)}"
+          ${removable ? `<button type="button" class="icon-btn danger" data-remove="${kind}" data-title="${escapeHtml(title)}"
             aria-label="${escapeHtml(title)} entfernen">✕</button>` : ""}
         </li>`;
       const rows = [
-        ...picked.map((p, i) => item("picked", p.title, `👤 ${escapeHtml(p.by || "Spieler")}`, i)),
-        ...random.map((t, i) => item("random", t, "🎲 Zufall", picked.length + i)),
+        ...picked.map((p, i) => item("picked", p.title,
+          `👤 ${escapeHtml(p.by || "Spieler")}${p.uid && p.uid === u.uid ? " (du)" : ""}`, i, mayRemovePicked(u, p))),
+        ...random.map((t, i) => item("random", t, "🎲 Zufall", picked.length + i, u.canEdit && u.isOwner)),
       ];
       for (let i = total; i < SONGS_PER_DAY; i++) rows.push(`<li class="song free" style="--i:${i}">♪ freier Platz</li>`);
       q("[data-list]").innerHTML = rows.join("");
@@ -364,20 +389,23 @@ export function createSongsView({ root, admin = false, getUser, onChange = () =>
       rnd.textContent = random.length ? "🎲 Zufallslieder neu würfeln" : "🎲 Mit Zufallsliedern auffüllen";
     }
 
-    const fillAll = q("[data-fill-all]");
-    if (fillAll) fillAll.disabled = st.busy;
+    q("[data-fill-all-row]").hidden = !(u.canEdit && u.isOwner);
+    q("[data-fill-all]").disabled = st.busy;
 
     // Pool
     q("[data-count]").textContent = st.pool.length;
     q("[data-pool-form]").hidden = !u.canEdit;
     q(".pool-text").textContent = u.canEdit
-      ? "Aus diesen Liedern wird zufällig gezogen. Fehlt eins? Einfach ergänzen."
+      ? `Aus diesen Liedern wird zufällig gezogen. Fehlt eins? Einfach ergänzen.${u.isOwner ? "" : " Deine eigenen Lieder (✕) kannst du wieder entfernen."}`
       : "Aus diesen Liedern wird zufällig gezogen.";
     q("[data-pool]").innerHTML = st.pool.length
-      ? st.pool.map((s) => `<li class="song-chip" title="${s.addedBy ? `Ergänzt von ${escapeHtml(s.addedBy)}` : ""}">
+      ? st.pool.map((s) => {
+        const mine = u.uid && s.addedByUid === u.uid && s.addedBy !== "Spielleitung";
+        return `<li class="song-chip${mine ? " mine" : ""}" title="${s.addedBy ? `Ergänzt von ${escapeHtml(s.addedBy)}` : ""}">
           <span>${escapeHtml(s.title)}</span>
-          ${admin ? `<button type="button" class="chip-x" data-unpool="${escapeHtml(s.id)}" aria-label="${escapeHtml(s.title)} aus dem Pool entfernen">✕</button>` : ""}
-        </li>`).join("")
+          ${mayRemovePool(u, s) ? `<button type="button" class="chip-x" data-unpool="${escapeHtml(s.id)}" aria-label="${escapeHtml(s.title)} aus dem Pool entfernen">✕</button>` : ""}
+        </li>`;
+      }).join("")
       : `<li class="dd-empty">Der Liederpool ist leer.</li>`;
   }
 

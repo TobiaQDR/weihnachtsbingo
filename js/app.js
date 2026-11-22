@@ -1,481 +1,741 @@
 import {
-  doc, collection, onSnapshot, getDoc, getDocs, setDoc, updateDoc, deleteDoc, writeBatch, serverTimestamp,
+  doc, collection, onSnapshot, getDoc, setDoc, updateDoc, deleteDoc, writeBatch, serverTimestamp,
+  arrayUnion, arrayRemove,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import {
-  getAuth, signInAnonymously, onAuthStateChanged,
+  getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut,
+  EmailAuthProvider, reauthenticateWithCredential, updatePassword,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { app, db, configured } from "./firebase.js";
 import {
-  CELL_COUNT, normalize, cleanWord, cellsOf, canAddWords, daysMap, drawnMap, scoreBoard, ranking,
-  isDayOpen, escapeHtml, emptyCells, makePlayerCode, randomId, isValidPin, pinKey,
+  CELL_COUNT, MIN_PASSWORD_LENGTH, MAX_GAME_NAME_LENGTH, SEASON_YEAR, normalize, cleanWord, cleanName,
+  isValidName, accountEmail, cellsOf, canAddWords, daysMap, drawnMap, scoreBoard, ranking, isDayOpen,
+  escapeHtml, emptyCells, randomId, swapCells,
 } from "./bingo.js";
 import {
-  $, toast, initTabs, startSnow, confetti, openOverlay, closeOverlay, miniGridHtml,
-  calendarHtml, createDayEditor, storageGet, storageSet, reducedMotion,
+  $, toast, initTabs, startSnow, confetti, openOverlay, closeOverlay, miniGridHtml, calendarHtml,
+  createDayEditor, storageGet, storageSet, storageRemove, reducedMotion, initPasswordToggles,
+  resetPasswords, enableCellDrag,
 } from "./ui.js";
-import { createSongsView } from "./songs.js";
+import { createSongsView, seedDefaultSongs } from "./songs.js";
+import { createSettingsView } from "./settings.js";
+
+// Datenmodell (siehe firestore.rules):
+//   users/{uid}                { name, games: [gameId] }       eigenes Konto und Liste der eigenen Spiele
+//   games/{g}                  { name, owner, ownerName, locked, songsSeeded, createdAt }
+//   games/{g}/boards/{uid}     { name, cells[25], canAddWords } Bingo-Feld, Dokument-ID = Konto
+//   games/{g}/members/{uid}    { invite, joinedAt }            Nachweis der Einladung (privat)
+//   games/{g}/days/{1..24}, songs/{id}, songDays/{1..24}, private/invite
+
+const auth = configured ? getAuth(app) : null;
+/** Adresse beim Öffnen der Seite (Einladungslink: ?spiel=…&einladung=…). */
+const startParams = new URLSearchParams(location.search);
 
 const state = {
-  code: null,
-  boardId: null,
-  pinKey: null,     // Schlüssel des Anmelde-Dokuments logins/{pinKey}, null = noch keine PIN
-  guest: false,     // schaut nur zu, hat kein eigenes Feld
-  boards: null,     // alle Felder
-  dayDocs: null,    // Rohdaten der Tage
-  days: new Map(),  // Tag → Wörter
-  settings: null,
-  member: false,    // darf schreiben (anonym angemeldet und Link bestätigt)
+  user: null,            // angemeldetes Konto (null = nicht angemeldet, schaut als Gast zu)
+  profile: null,         // users/{uid}: { name, games }
+  gameInfo: new Map(),   // gameId → { name, owner, ownerName } oder null (gibt es nicht mehr)
+  gameId: null,          // gerade geöffnetes Spiel
+  game: null,            // games/{gameId}
+  boards: null,          // alle Felder des Spiels
+  dayDocs: null,         // Rohdaten der Tage
+  days: new Map(),       // Tag → Wörter
   editIndex: null,
   prevMask: null,
+  firstRender: true,
+  settingsStarted: false,
+  boardsFromCache: true, // Felder bisher nur aus dem Zwischenspeicher (noch nicht vom Server bestätigt)
+  pendingTab: null,      // Reiter, der beim nächsten Öffnen eines Spiels gezeigt wird
+  invite: null,          // { gameId, code } aus dem Einladungslink
 };
+/** Abos des geöffneten Spiels – beim Wechseln alle abbestellen. */
+let gameUnsubs = [];
+/** Spiele, die schon wieder in die eigene Liste eingetragen wurden. */
+const relisted = new Set();
+let tabs;
 
-// Lieder-Reiter (vor dem Start anlegen, weil startGuest() sofort abonniert)
-const songsView = createSongsView({
-  root: $("songs"),
-  getUser: () => {
-    if (state.guest) return { name: "", canEdit: false, note: "👀 Als Gast kannst du die Lieder nur ansehen." };
-    if (!state.member) return { name: "", canEdit: false, note: "Aussuchen ist gerade nicht möglich. Lade die Seite bitte neu." };
-    return { name: me()?.name ?? "", canEdit: true, note: "" };
-  },
-  onChange: () => { renderCalendar(); dayEditor.refresh(); },
-});
-
-// ---------- Start ----------
-
-const MAX_NAME_LENGTH = 30;
-const PIN_FORMAT_MSG = "Die PIN besteht aus 4 bis 8 Ziffern.";
-/** Geheimer Code aus dem Einladungslink (index.html?einladung=…), mit dem man selbst beitritt. */
-const invite = new URLSearchParams(location.search).get("einladung");
-// Gemerkt, damit man nach dem Abmelden wieder auf der Einladungsseite landet
-if (invite) storageSet("bingoEinladung", invite);
-
-function storageRemove(key) {
-  try { localStorage.removeItem(key); } catch { /* egal */ }
+if (startParams.get("spiel") && startParams.get("einladung")) {
+  state.invite = { gameId: startParams.get("spiel"), code: startParams.get("einladung") };
 }
 
-function getCode() {
-  const fromUrl = new URLSearchParams(location.search).get("spieler");
-  if (fromUrl) storageSet("bingoCode", fromUrl);
-  return fromUrl || storageGet("bingoCode");
-}
-
-function forgetCode() {
-  storageRemove("bingoCode");
+const SCREENS = ["loading", "error", "auth", "home", "invite", "game"];
+function showScreen(name) {
+  for (const id of SCREENS) $(id).hidden = id !== name;
 }
 
 function showError(text) {
-  $("loading").hidden = true;
-  $("join").hidden = true;
-  $("game").hidden = true;
-  $("error").hidden = false;
+  showScreen("error");
   $("error").textContent = text;
 }
-
-startSnow();
-state.code = getCode();
-
-if (!configured) {
-  showError("Das Spiel ist noch nicht eingerichtet (Firebase-Daten fehlen in js/firebase-config.js).");
-} else if (state.code) {
-  start().catch(onLoadError);
-} else if (invite && storageGet("bingoGast") === "1") {
-  startGuest();
-} else if (invite) {
-  showJoin();
-} else {
-  showError("Bitte öffne den Link, den du für das Weihnachtsbingo bekommen hast.");
-}
-
-/**
- * Spieler gibt es nicht mehr (entfernt oder Spiel zurückgesetzt): Wenn der Einladungslink
- * gemerkt ist, dorthin wechseln, damit man neu beitreten kann.
- */
-function goToInvite() {
-  const saved = storageGet("bingoEinladung");
-  if (!saved) return false;
-  const url = new URL(location.href);
-  url.search = new URLSearchParams({ einladung: saved }).toString();
-  url.hash = "";
-  location.replace(url.toString());
-  return true;
-}
-
-/** Persönlicher Link dieses Spielers (führt direkt ins eigene Feld). */
-function personalLink() {
-  const url = new URL(location.href);
-  url.search = new URLSearchParams({ spieler: state.code }).toString();
-  url.hash = "";
-  return url.toString();
-}
-
-async function start() {
-  const snap = await getDoc(doc(db, "players", state.code));
-  if (!snap.exists()) {
-    forgetCode();
-    state.code = null;
-    if (invite) {
-      showJoin();
-      return;
-    }
-    if (goToInvite()) return;
-    showError("Diesen Spieler gibt es nicht (mehr). Vielleicht wurdest du aus dem Spiel entfernt – frag bitte beim Spielleiter nach.");
-    return;
-  }
-  // Adresszeile auf den persönlichen Link umstellen, damit ein Lesezeichen immer ins eigene Feld führt
-  if (new URLSearchParams(location.search).get("spieler") !== state.code) {
-    history.replaceState(null, "", personalLink());
-  }
-  state.boardId = snap.data().boardId;
-  state.pinKey = snap.data().pinKey ?? null;
-  if (!state.boardId) {
-    showError("Das Spiel wurde gerade aktualisiert. Der Spielleiter muss einmal die Spielleiter-Seite öffnen – danach geht es hier weiter.");
-    return;
-  }
-
-  // PIN aktuell halten (sie kann auch auf einem anderen Gerät geändert werden)
-  onSnapshot(doc(db, "players", state.code), (s) => {
-    if (!s.exists()) return; // Entfernen merkt render() am fehlenden Feld
-    state.pinKey = s.data().pinKey ?? null;
-    render();
-  }, (err) => console.error(err));
-
-  subscribe();
-  joinGame();
-}
-
-/** Nur zuschauen: alle Felder und den Kalender sehen, ohne eigenes Feld. */
-function startGuest() {
-  state.guest = true;
-  $("join").hidden = true;
-  $("loading").hidden = false;
-  // Kein eigenes Feld: Reiter „Mein Feld“ fällt weg
-  document.querySelector('#tabs [data-tab="mine"]')?.remove();
-  document.querySelector('[data-view="mine"]')?.remove();
-  $("guest-bar").hidden = false;
-  subscribe();
-}
-
-function subscribe() {
-  onSnapshot(collection(db, "boards"), (s) => {
-    state.boards = s.docs.map((d) => ({ id: d.id, ...d.data() }));
-    render();
-  }, onLoadError);
-
-  onSnapshot(collection(db, "days"), (s) => {
-    state.dayDocs = s.docs.map((d) => ({ id: d.id, ...d.data() }));
-    state.days = daysMap(state.dayDocs);
-    render();
-  }, onLoadError);
-
-  onSnapshot(doc(db, "game", "settings"), (s) => {
-    state.settings = s.exists() ? s.data() : {};
-    render();
-  }, onLoadError);
-
-  songsView.start();
-
-  // Türchen öffnen sich um Mitternacht
-  setInterval(renderCalendar, 60_000);
-}
-
-/** Angemeldeten Nutzer holen, notfalls im Hintergrund anonym anmelden. */
-async function ensureUser() {
-  const auth = getAuth(app);
-  await (typeof auth.authStateReady === "function"
-    ? auth.authStateReady()
-    : new Promise((resolve) => { const off = onAuthStateChanged(auth, () => { off(); resolve(); }); }));
-  return auth.currentUser ?? (await signInAnonymously(auth)).user;
-}
-
-/** Diesen Browser mit dem Spieler verknüpfen (nötig zum Schreiben). */
-async function joinGame() {
-  try {
-    const user = await ensureUser();
-    const ref = doc(db, "members", user.uid);
-    const m = await getDoc(ref);
-    if (!m.exists() || m.data().code !== state.code || m.data().boardId !== state.boardId) {
-      await setDoc(ref, { code: state.code, boardId: state.boardId });
-    }
-    state.member = true;
-  } catch (err) {
-    console.error("Anmeldung fehlgeschlagen:", err);
-    state.member = false;
-    toast("Du kannst gerade nur zuschauen – die Anmeldung hat nicht geklappt.", 6000);
-  }
-  render();
-}
-
-// ---------- Einladung: neu mitspielen, anmelden oder zuschauen ----------
-
-function showJoin() {
-  $("loading").hidden = true;
-  $("error").hidden = true;
-  $("join").hidden = false;
-  setJoinStep("join-start");
-}
-
-function setJoinStep(step) {
-  for (const el of $("join").querySelectorAll(".join-step")) el.hidden = el.id !== step;
-  if (step === "join-new") $("join-name").focus();
-  if (step === "join-login") loadLoginNames();
-}
-
-$("join").addEventListener("click", (e) => {
-  const b = e.target.closest("[data-mode]");
-  if (!b) return;
-  if (b.dataset.mode === "guest") {
-    storageSet("bingoGast", "1");
-    startGuest();
-  } else {
-    setJoinStep(b.dataset.mode);
-  }
-});
-
-async function loadLoginNames() {
-  const select = $("login-name");
-  $("login-msg").textContent = "";
-  select.innerHTML = `<option value="">Wird geladen …</option>`;
-  try {
-    const snap = await getDocs(collection(db, "boards"));
-    const boards = snap.docs.map((d) => ({ id: d.id, name: String(d.data().name ?? "?") }))
-      .sort((a, b) => a.name.localeCompare(b.name, "de"));
-    select.innerHTML = `<option value="">Bitte wählen …</option>` + boards
-      .map((b) => `<option value="${escapeHtml(b.id)}">${escapeHtml(b.name)}</option>`).join("");
-    if (!boards.length) $("login-msg").textContent = "Es spielt noch niemand mit.";
-  } catch (err) {
-    console.error(err);
-    select.innerHTML = `<option value="">–</option>`;
-    $("login-msg").textContent = "Die Spielerliste konnte nicht geladen werden. Bitte lade die Seite neu.";
-  }
-}
-
-$("join-new").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const name = $("join-name").value.replace(/\s+/g, " ").trim().slice(0, MAX_NAME_LENGTH);
-  const pin = $("join-pin").value.trim();
-  if (!name) return;
-  if (!isValidPin(pin)) {
-    $("join-msg").textContent = PIN_FORMAT_MSG;
-    return;
-  }
-  $("join-msg").textContent = "";
-  $("join-btn").disabled = true;
-  let code;
-  try {
-    const boards = await getDocs(collection(db, "boards"));
-    if (boards.docs.some((d) => normalize(d.data().name) === normalize(name))) {
-      $("join-msg").textContent = `„${name}“ spielt schon mit. Bist du das? Dann geh zurück und wähle „Ich spiele schon mit“. Sonst nimm bitte einen anderen Namen.`;
-      return;
-    }
-    const user = await ensureUser();
-    code = makePlayerCode(name);
-    const boardId = randomId();
-    const key = await pinKey(boardId, pin);
-    // Feld, geheimer Spieler-Eintrag, Verknüpfung mit diesem Browser und PIN-Anmeldung in einem Rutsch
-    const batch = writeBatch(db);
-    batch.set(doc(db, "boards", boardId), { name, cells: emptyCells(), canAddWords: true });
-    batch.set(doc(db, "players", code), { name, boardId, uid: user.uid, invite, pinKey: key });
-    batch.set(doc(db, "members", user.uid), { code, boardId });
-    batch.set(doc(db, "logins", key), { code, boardId });
-    await batch.commit();
-  } catch (err) {
-    console.error(err);
-    $("join-msg").textContent = "Beitreten hat nicht geklappt. Vielleicht ist der Einladungslink nicht mehr gültig – frag bitte beim Spielleiter nach.";
-    return;
-  } finally {
-    $("join-btn").disabled = false;
-  }
-
-  enterGame(code, `Willkommen, ${name}! 🎉`);
-});
-
-$("join-login").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const boardId = $("login-name").value;
-  const pin = $("login-pin").value.trim();
-  const msg = $("login-msg");
-  if (!boardId) {
-    msg.textContent = "Bitte wähle deinen Namen aus.";
-    return;
-  }
-  if (!isValidPin(pin)) {
-    msg.textContent = PIN_FORMAT_MSG;
-    return;
-  }
-  msg.textContent = "";
-  $("login-btn").disabled = true;
-  let code;
-  try {
-    const snap = await getDoc(doc(db, "logins", await pinKey(boardId, pin)));
-    if (!snap.exists() || snap.data().boardId !== boardId) {
-      msg.textContent = "Die PIN stimmt nicht. Noch keine PIN? Dann lege sie auf deinem bisherigen Gerät unter „Mein Feld“ fest – oder frag die Spielleitung.";
-      return;
-    }
-    code = snap.data().code;
-  } catch (err) {
-    console.error(err);
-    msg.textContent = "Anmelden hat nicht geklappt. Bitte prüfe die Internetverbindung.";
-    return;
-  } finally {
-    $("login-btn").disabled = false;
-  }
-
-  const name = $("login-name").selectedOptions[0]?.textContent ?? "";
-  enterGame(code, `Willkommen zurück, ${name}! 🎄`);
-});
-
-function enterGame(code, greeting) {
-  storageSet("bingoCode", code);
-  storageRemove("bingoGast");
-  state.code = code;
-  $("join").hidden = true;
-  $("loading").hidden = false;
-  toast(greeting, 5000);
-  start().catch(onLoadError);
-}
-
-$("guest-leave").addEventListener("click", () => {
-  storageRemove("bingoGast");
-  location.reload();
-});
-
-// ---------- PIN & Abmelden ----------
-
-function openPinDialog() {
-  $("pin-title").textContent = state.pinKey ? "PIN ändern" : "PIN festlegen";
-  $("pin-input").value = "";
-  $("pin-msg").textContent = "";
-  openOverlay($("pin-dialog"));
-  $("pin-input").focus();
-}
-
-function closePinDialog() {
-  closeOverlay($("pin-dialog"));
-}
-
-/** Neue PIN: Anmelde-Dokument anlegen, altes löschen, Schlüssel beim Spieler vermerken. */
-async function savePin(pin) {
-  const key = await pinKey(state.boardId, pin);
-  if (key === state.pinKey) return;
-  const batch = writeBatch(db);
-  batch.update(doc(db, "players", state.code), { pinKey: key });
-  batch.set(doc(db, "logins", key), { code: state.code, boardId: state.boardId });
-  if (state.pinKey) batch.delete(doc(db, "logins", state.pinKey));
-  await batch.commit();
-  state.pinKey = key;
-}
-
-$("pin-open").addEventListener("click", openPinDialog);
-$("pin-hint-btn").addEventListener("click", openPinDialog);
-$("pin-cancel").addEventListener("click", closePinDialog);
-$("pin-dialog").addEventListener("click", (e) => { if (e.target === $("pin-dialog")) closePinDialog(); });
-
-$("pin-form").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const pin = $("pin-input").value.trim();
-  if (!isValidPin(pin)) {
-    $("pin-msg").textContent = PIN_FORMAT_MSG;
-    return;
-  }
-  if (!state.member) {
-    $("pin-msg").textContent = "Das geht gerade nicht. Lade die Seite bitte neu.";
-    return;
-  }
-  $("pin-save").disabled = true;
-  try {
-    await savePin(pin);
-    closePinDialog();
-    render();
-    toast("🔑 PIN gespeichert. Damit meldest du dich auf anderen Geräten an.", 5000);
-  } catch (err) {
-    console.error(err);
-    $("pin-msg").textContent = "Speichern hat nicht geklappt. Bitte nochmal versuchen.";
-  } finally {
-    $("pin-save").disabled = false;
-  }
-});
-
-$("logout").addEventListener("click", async () => {
-  const text = state.pinKey
-    ? "Auf diesem Gerät abmelden? Dein Feld bleibt erhalten. Wieder anmelden kannst du dich über den Einladungslink mit Name und PIN."
-    : "Du hast noch keine PIN festgelegt! Ohne PIN kommst du nach dem Abmelden nicht mehr selbst in dein Feld. Trotzdem abmelden?";
-  if (!confirm(text)) return;
-  try {
-    const user = getAuth(app).currentUser;
-    if (user) await deleteDoc(doc(db, "members", user.uid));
-  } catch (err) {
-    console.warn("Verknüpfung nicht gelöscht (egal):", err);
-  }
-  forgetCode();
-  storageRemove("bingoGast");
-  const savedInvite = storageGet("bingoEinladung");
-  const url = new URL(location.href);
-  url.search = savedInvite ? new URLSearchParams({ einladung: savedInvite }).toString() : "";
-  url.hash = "";
-  location.replace(url.toString());
-});
 
 function onLoadError(err) {
   console.error(err);
   showError("Die Daten konnten nicht geladen werden. Bitte prüfe die Internetverbindung und lade die Seite neu.");
 }
 
-// ---------- Anzeige ----------
+/** Adresszeile anpassen, ohne die Seite neu zu laden. */
+function setUrl(params) {
+  const url = new URL(location.href);
+  url.search = new URLSearchParams(params).toString();
+  url.hash = "";
+  history.replaceState(null, "", url.toString());
+}
 
-const me = () => state.boards?.find((b) => b.id === state.boardId);
-const locked = () => state.settings?.locked === true;
+const greet = (text) => { $("greeting").textContent = text; };
+const userName = () => state.profile?.name ?? "";
+const myGames = () => state.profile?.games ?? [];
+const gameInfoOf = (g) => ({ name: String(g?.name ?? "Weihnachtsbingo"), owner: g?.owner ?? "", ownerName: String(g?.ownerName ?? "") });
 
-let tabs;
-let firstRender = true;
+// ---------- Start ----------
 
-function render() {
-  if (!state.boards || !state.dayDocs || !state.settings) return;
-  const board = state.guest ? null : me();
-  if (!state.guest && !board) {
-    forgetCode();
-    if (goToInvite()) return;
-    showError("Du bist nicht mehr im Spiel, die Spielleitung hat dich entfernt. Bitte frag dort nach.");
+startSnow();
+initPasswordToggles();
+
+// Lieder-Reiter (gehört immer zum gerade geöffneten Spiel)
+const songsView = createSongsView({
+  root: $("songs"),
+  getUser: () => {
+    const none = { name: "", uid: "", canEdit: false, isOwner: false };
+    if (!state.user) return { ...none, note: "👀 Als Gast kannst du die Lieder nur ansehen." };
+    if (!me()) return { ...none, note: "👀 Du schaust bei diesem Spiel nur zu." };
+    return { name: userName(), uid: state.user.uid, canEdit: true, isOwner: isOwner(), note: "" };
+  },
+  onChange: () => { renderCalendar(); dayEditor.refresh(); },
+});
+
+// Reiter der Spielleitung
+const settingsView = createSettingsView({
+  root: $("settings"),
+  getCtx: () => ({
+    gameId: state.gameId, game: state.game, boards: state.boards, days: state.days, uid: state.user?.uid,
+  }),
+  onDeleted: () => { closeGame(); showHome(); },
+});
+
+if (!configured) {
+  showError("Das Spiel ist noch nicht eingerichtet (Firebase-Daten fehlen in js/firebase-config.js).");
+} else {
+  boot().catch(onLoadError);
+}
+
+async function boot() {
+  await (typeof auth.authStateReady === "function"
+    ? auth.authStateReady()
+    : new Promise((resolve) => { const off = onAuthStateChanged(auth, () => { off(); resolve(); }); }));
+  const user = auth.currentUser;
+  if (user && !user.isAnonymous) return signedIn(user);
+  // Anonyme Anmeldung aus der alten Version aufräumen
+  if (user?.isAnonymous) await signOut(auth).catch(() => {});
+
+  if (startParams.get("einladung") && !startParams.get("spiel")) {
+    toast("Dieser Einladungslink gehört zur alten Version. Bitte frag nach dem neuen Link.", 7000);
+  }
+  const g = startParams.get("spiel");
+  if (g && storageGet("bingoGast") === g) return openGame(g);
+  showAuth();
+}
+
+/**
+ * Nach dem Anmelden: Konto-Dokument laden (notfalls anlegen) und weiter zum Spiel,
+ * zur Einladung oder zur Liste der eigenen Spiele.
+ */
+async function signedIn(user, nameHint = "") {
+  state.user = user;
+  showScreen("loading");
+  const ref = doc(db, "users", user.uid);
+  let snap = await getDoc(ref);
+  if (!snap.exists()) {
+    if (!nameHint) {
+      await signOut(auth);
+      state.user = null;
+      showAuth("Bitte melde dich noch einmal an.");
+      return;
+    }
+    await setDoc(ref, { name: nameHint, games: [] });
+    snap = await getDoc(ref);
+  }
+  state.profile = profileOf(snap.data());
+  storageRemove("bingoGast");
+
+  onSnapshot(ref, (s) => {
+    if (!s.exists()) return;
+    state.profile = profileOf(s.data());
+    loadGameInfos().then(() => {
+      renderSwitcher();
+      if (!$("home").hidden) renderHome();
+    });
+  }, (err) => console.error("Konto:", err));
+
+  await loadGameInfos();
+
+  const g = startParams.get("spiel");
+  if (state.invite && !myGames().includes(state.invite.gameId)) return showInvite();
+  if (g) return openGame(g);
+  const last = storageGet("bingoSpiel");
+  if (last && myGames().includes(last)) return openGame(last);
+  showHome();
+}
+
+function profileOf(data) {
+  return {
+    name: String(data?.name ?? ""),
+    games: Array.isArray(data?.games) ? data.games.map(String) : [],
+  };
+}
+
+/** Namen der eigenen Spiele holen. Gelöschte Spiele fliegen aus der eigenen Liste. */
+async function loadGameInfos() {
+  const missing = myGames().filter((id) => !state.gameInfo.has(id));
+  await Promise.all(missing.map(async (id) => {
+    try {
+      const s = await getDoc(doc(db, "games", id));
+      state.gameInfo.set(id, s.exists() ? gameInfoOf(s.data()) : null);
+    } catch (err) {
+      console.error(err);
+    }
+  }));
+  const gone = myGames().filter((id) => state.gameInfo.get(id) === null);
+  if (gone.length) forgetGames(gone);
+}
+
+function forgetGames(ids) {
+  if (!state.user || !ids.length) return;
+  updateDoc(doc(db, "users", state.user.uid), { games: arrayRemove(...ids) })
+    .catch((err) => console.warn("Liste der Spiele nicht aktualisiert:", err));
+}
+
+// ---------- Anmelden / Konto erstellen ----------
+
+let authMode = "login";
+
+function setAuthMode(mode) {
+  authMode = mode;
+  for (const b of $("auth-mode").querySelectorAll("[data-mode]")) {
+    const on = b.dataset.mode === mode;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-checked", String(on));
+  }
+  $("auth-mode").style.setProperty("--idx", mode === "register" ? 1 : 0);
+  for (const el of $("auth").querySelectorAll("[data-only]")) el.hidden = el.dataset.only !== mode;
+  $("auth-btn").textContent = mode === "register" ? "Konto erstellen" : "Anmelden";
+  $("auth-pass").autocomplete = mode === "register" ? "new-password" : "current-password";
+  $("auth-msg").textContent = "";
+}
+
+async function showAuth(message = "") {
+  greet("Schön, dass du da bist ✨");
+  setAuthMode(state.invite ? "register" : authMode);
+  $("auth-msg").textContent = message;
+  showScreen("auth");
+  const g = startParams.get("spiel");
+  $("auth-guest").hidden = !g;
+  $("auth-invite").hidden = true;
+  if (g) {
+    try {
+      const s = await getDoc(doc(db, "games", g));
+      if (s.exists()) {
+        $("auth-invite").textContent = state.invite
+          ? `🎄 Du wurdest zu „${s.data().name}“ eingeladen. Erstelle ein Konto oder melde dich an, um mitzuspielen.`
+          : `🎄 Spiel „${s.data().name}“: Melde dich an, um mitzuspielen.`;
+        $("auth-invite").hidden = false;
+      }
+    } catch (err) {
+      console.warn(err);
+    }
+  }
+}
+
+$("auth-mode").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-mode]");
+  if (b && b.dataset.mode !== authMode) setAuthMode(b.dataset.mode);
+});
+
+$("auth-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msg = $("auth-msg");
+  const name = cleanName($("auth-name").value);
+  const password = $("auth-pass").value;
+  if (!isValidName(name)) {
+    msg.textContent = "Der Benutzername braucht 2 bis 30 Zeichen.";
     return;
   }
-
-  $("loading").hidden = true;
-  $("error").hidden = true;
-  if ($("game").hidden) {
-    $("game").hidden = false;
-    tabs ??= initTabs($("tabs"), "bingoTab");
+  if (password.length < MIN_PASSWORD_LENGTH) {
+    msg.textContent = `Das Passwort braucht mindestens ${MIN_PASSWORD_LENGTH} Zeichen.`;
+    return;
   }
-  $("greeting").textContent = board ? `Hallo ${board.name}! ✨` : "Hallo! Schön, dass du zuschaust ✨";
-
-  if (board) {
-    renderMine(board);
-    renderAccount();
+  msg.textContent = "";
+  $("auth-btn").disabled = true;
+  const register = authMode === "register";
+  try {
+    const email = await accountEmail(name);
+    const cred = register
+      ? await createUserWithEmailAndPassword(auth, email, password)
+      : await signInWithEmailAndPassword(auth, email, password);
+    resetPasswords($("auth"));
+    await signedIn(cred.user, name);
+    toast(register ? `Willkommen, ${userName()}! 🎉` : `Willkommen zurück, ${userName()}! 🎄`, 4000);
+  } catch (err) {
+    console.error(err);
+    msg.textContent = authErrorText(err);
+    if (!$("auth").hidden) return;
+    showScreen("auth");
+  } finally {
+    $("auth-btn").disabled = false;
   }
+});
+
+function authErrorText(err) {
+  switch (err?.code) {
+    case "auth/email-already-in-use":
+      return "Diesen Benutzernamen gibt es schon. Bist du das? Dann wähle oben „Anmelden“. Sonst nimm bitte einen anderen Namen.";
+    case "auth/invalid-credential":
+    case "auth/invalid-login-credentials":
+    case "auth/wrong-password":
+    case "auth/user-not-found":
+      return "Benutzername oder Passwort stimmt nicht. Noch kein Konto? Dann wähle oben „Konto erstellen“.";
+    case "auth/weak-password":
+      return `Das Passwort ist zu kurz (mindestens ${MIN_PASSWORD_LENGTH} Zeichen).`;
+    case "auth/too-many-requests":
+      return "Zu viele Versuche. Bitte warte kurz und versuche es dann nochmal.";
+    case "auth/network-request-failed":
+      return "Keine Verbindung. Bitte prüfe die Internetverbindung.";
+    case "auth/operation-not-allowed":
+      return "Anmelden ist noch nicht eingerichtet (in Firebase „E-Mail/Passwort“ aktivieren).";
+    default:
+      return "Das hat leider nicht geklappt. Bitte nochmal versuchen.";
+  }
+}
+
+$("auth-guest").addEventListener("click", () => {
+  const g = startParams.get("spiel");
+  if (!g) return;
+  storageSet("bingoGast", g);
+  openGame(g);
+});
+
+// ---------- Meine Spiele ----------
+
+function showHome() {
+  closeGame();
+  setUrl({});
+  greet(`Hallo ${userName()}! ✨`);
+  renderHome();
+  showScreen("home");
+}
+
+function renderHome() {
+  const games = myGames()
+    .map((id) => ({ id, info: state.gameInfo.get(id) }))
+    .filter((g) => g.info)
+    .sort((a, b) => a.info.name.localeCompare(b.info.name, "de"));
+  $("home-games").innerHTML = games.length
+    ? games.map(({ id, info }, i) => {
+      const mine = info.owner === state.user?.uid;
+      return `<button type="button" class="game-card" data-game="${escapeHtml(id)}" style="--i:${i}">
+          <span class="game-icon" aria-hidden="true">${mine ? "👑" : "🎄"}</span>
+          <span>
+            <strong class="name">${escapeHtml(info.name)}</strong>
+            <span class="meta">${mine ? "Du leitest das Spiel" : `Spielleitung: ${escapeHtml(info.ownerName || "?")}`}</span>
+          </span>
+          <span class="game-go" aria-hidden="true">›</span>
+        </button>`;
+    }).join("")
+    : `<p class="intro-text">Du spielst noch bei keinem Spiel mit. Erstelle unten ein eigenes oder öffne einen Einladungslink.</p>`;
+}
+
+$("home-games").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-game]");
+  if (b) openGame(b.dataset.game);
+});
+
+$("create-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!state.user) return;
+  const name = cleanName($("create-name").value, MAX_GAME_NAME_LENGTH) || `Weihnachtsbingo ${SEASON_YEAR}`;
+  const uid = state.user.uid;
+  const gameId = randomId(20);
+  $("create-btn").disabled = true;
+  try {
+    // Spiel, Einladung, eigenes Feld und Eintrag in der eigenen Liste in einem Rutsch
+    const batch = writeBatch(db);
+    batch.set(doc(db, "games", gameId), {
+      name, owner: uid, ownerName: userName(), locked: false, songsSeeded: false, createdAt: serverTimestamp(),
+    });
+    batch.set(doc(db, "games", gameId, "private", "invite"), { code: randomId(16), open: true });
+    batch.set(doc(db, "games", gameId, "boards", uid), { name: userName(), cells: emptyCells(), canAddWords: true });
+    batch.update(doc(db, "users", uid), { games: arrayUnion(gameId) });
+    await batch.commit();
+  } catch (err) {
+    console.error(err);
+    toast("Das Spiel konnte nicht erstellt werden. Bitte nochmal versuchen.", 5000);
+    return;
+  } finally {
+    $("create-btn").disabled = false;
+  }
+  $("create-name").value = "";
+  state.gameInfo.set(gameId, { name, owner: uid, ownerName: userName() });
+  await seedSongs(gameId);
+  toast(`🎉 „${name}“ ist erstellt! Schick jetzt den Einladungslink herum.`, 5000);
+  state.pendingTab = "settings";
+  openGame(gameId);
+});
+
+/** Liederpool eines eigenen Spiels mit klassischen Liedern füllen. */
+async function seedSongs(gameId) {
+  try {
+    await seedDefaultSongs(gameId, state.user.uid);
+  } catch (err) {
+    console.error("Liederpool:", err);
+    toast("Der Liederpool konnte nicht gefüllt werden.", 5000);
+  }
+}
+
+// ---------- Einladung annehmen ----------
+
+async function showInvite() {
+  const { gameId } = state.invite;
+  showScreen("loading");
+  try {
+    const [g, b] = await Promise.all([
+      getDoc(doc(db, "games", gameId)),
+      getDoc(doc(db, "games", gameId, "boards", state.user.uid)),
+    ]);
+    if (!g.exists()) {
+      state.invite = null;
+      toast("Dieses Spiel gibt es nicht mehr.", 5000);
+      return showHome();
+    }
+    if (b.exists()) return openGame(gameId); // schon dabei
+    const info = gameInfoOf(g.data());
+    greet(`Hallo ${userName()}! ✨`);
+    $("invite-game").textContent = `„${info.name}“`;
+    $("invite-owner").textContent = info.ownerName ? `Spielleitung: ${info.ownerName}` : "";
+    $("invite-msg").textContent = "";
+    setUrl({ spiel: gameId, einladung: state.invite.code });
+    showScreen("invite");
+  } catch (err) {
+    onLoadError(err);
+  }
+}
+
+$("invite-join").addEventListener("click", async () => {
+  if (!state.invite || !state.user) return;
+  const { gameId, code } = state.invite;
+  const uid = state.user.uid;
+  $("invite-join").disabled = true;
+  try {
+    // Feld, Einladungsnachweis und Eintrag in der eigenen Liste in einem Rutsch
+    const batch = writeBatch(db);
+    batch.set(doc(db, "games", gameId, "boards", uid), { name: userName(), cells: emptyCells(), canAddWords: true });
+    batch.set(doc(db, "games", gameId, "members", uid), { invite: code, joinedAt: serverTimestamp() });
+    batch.update(doc(db, "users", uid), { games: arrayUnion(gameId) });
+    await batch.commit();
+  } catch (err) {
+    console.error(err);
+    $("invite-msg").textContent = "Beitreten hat nicht geklappt. Vielleicht ist der Einladungslink nicht mehr gültig oder der Beitritt geschlossen – frag bitte bei der Spielleitung nach.";
+    return;
+  } finally {
+    $("invite-join").disabled = false;
+  }
+  state.invite = null;
+  toast(`Willkommen im Spiel, ${userName()}! 🎉`, 4000);
+  state.pendingTab = "mine";
+  openGame(gameId);
+});
+
+$("invite-watch").addEventListener("click", () => {
+  if (state.invite) openGame(state.invite.gameId);
+});
+
+// ---------- Spiel öffnen und wechseln ----------
+
+function openGame(gameId) {
+  closeGame();
+  state.gameId = gameId;
+  if (state.user) storageSet("bingoSpiel", gameId);
+  setUrl(state.invite?.gameId === gameId ? { spiel: gameId, einladung: state.invite.code } : { spiel: gameId });
+  showScreen("loading");
+
+  const g = (...path) => [db, "games", gameId, ...path];
+  gameUnsubs.push(
+    onSnapshot(doc(...g()), (s) => {
+      if (!s.exists()) {
+        // Nur dem Server glauben – der Zwischenspeicher kennt ein Spiel vielleicht noch nicht
+        if (!s.metadata.fromCache) gameGone();
+        return;
+      }
+      state.game = s.data();
+      state.gameInfo.set(gameId, gameInfoOf(state.game));
+      renderSwitcher();
+      render();
+    }, onLoadError),
+    onSnapshot(collection(...g("boards")), (s) => {
+      state.boards = s.docs.map((d) => ({ id: d.id, ...d.data() }));
+      state.boardsFromCache = s.metadata.fromCache;
+      render();
+    }, onLoadError),
+    onSnapshot(collection(...g("days")), (s) => {
+      state.dayDocs = s.docs.map((d) => ({ id: d.id, ...d.data() }));
+      state.days = daysMap(state.dayDocs);
+      render();
+    }, onLoadError),
+    songsView.start(gameId),
+  );
+}
+
+/** Abos des bisherigen Spiels beenden und alles zurücksetzen. */
+function closeGame() {
+  gameUnsubs.splice(0).forEach((off) => off());
+  dayEditor.close();
+  if (state.editIndex !== null) closeEditor();
+  Object.assign(state, {
+    gameId: null, game: null, boards: null, dayDocs: null, days: new Map(),
+    prevMask: null, firstRender: true, settingsStarted: false, boardsFromCache: true,
+  });
+  $("grid").innerHTML = ""; // beim nächsten Spiel neu aufbauen (mit Intro-Animation)
+}
+
+/** Das geöffnete Spiel wurde gelöscht. */
+function gameGone() {
+  const name = state.gameInfo.get(state.gameId)?.name ?? "Das Spiel";
+  const wasOwner = isOwner();
+  const id = state.gameId;
+  state.gameInfo.set(id, null);
+  closeGame();
+  if (!wasOwner) toast(`„${name}“ gibt es nicht mehr.`, 5000);
+  if (!state.user) {
+    storageRemove("bingoGast");
+    return showError("Dieses Spiel gibt es nicht (mehr).");
+  }
+  forgetGames([id]);
+  showHome();
+}
+
+function renderSwitcher() {
+  const select = $("game-switch");
+  if (!state.user) return;
+  const ids = [...myGames()];
+  if (state.gameId && !ids.includes(state.gameId)) ids.push(state.gameId); // nur zuschauen
+  const options = ids
+    .map((id) => ({ id, info: state.gameInfo.get(id) }))
+    .filter((o) => o.info)
+    .sort((a, b) => a.info.name.localeCompare(b.info.name, "de"));
+  select.innerHTML = options.map(({ id, info }) =>
+    `<option value="${escapeHtml(id)}">${info.owner === state.user.uid ? "👑 " : "🎄 "}${escapeHtml(info.name)}${myGames().includes(id) ? "" : " (zuschauen)"}</option>`,
+  ).join("") + `<option value="">➕ Meine Spiele / neues Spiel …</option>`;
+  select.value = state.gameId ?? "";
+}
+
+$("game-switch").addEventListener("change", (e) => {
+  const id = e.target.value;
+  if (!id) return showHome();
+  if (id !== state.gameId) openGame(id);
+});
+
+// ---------- Konto: Passwort, Abmelden, Spiel verlassen ----------
+
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-action]");
+  if (!b) return;
+  if (b.dataset.action === "home") {
+    state.invite = null;
+    showHome();
+  } else if (b.dataset.action === "password") {
+    openPasswordDialog();
+  } else if (b.dataset.action === "logout") {
+    logout();
+  }
+});
+
+async function logout() {
+  if (!confirm("Auf diesem Gerät abmelden? Deine Spiele bleiben erhalten. Wieder anmelden kannst du dich mit Benutzername und Passwort.")) return;
+  closeGame();
+  storageRemove("bingoSpiel");
+  storageRemove("bingoGast");
+  await signOut(auth).catch((err) => console.warn(err));
+  const url = new URL(location.href);
+  url.search = "";
+  url.hash = "";
+  location.replace(url.toString());
+}
+
+function openPasswordDialog() {
+  resetPasswords($("pw-dialog"));
+  $("pw-msg").textContent = "";
+  openOverlay($("pw-dialog"));
+  $("pw-old").focus();
+}
+
+function closePasswordDialog() {
+  closeOverlay($("pw-dialog"));
+}
+
+$("pw-cancel").addEventListener("click", closePasswordDialog);
+$("pw-dialog").addEventListener("click", (e) => { if (e.target === $("pw-dialog")) closePasswordDialog(); });
+
+$("pw-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const oldPw = $("pw-old").value;
+  const newPw = $("pw-new").value;
+  const msg = $("pw-msg");
+  if (newPw.length < MIN_PASSWORD_LENGTH) {
+    msg.textContent = `Das neue Passwort braucht mindestens ${MIN_PASSWORD_LENGTH} Zeichen.`;
+    return;
+  }
+  const user = auth.currentUser;
+  if (!user) return;
+  $("pw-save").disabled = true;
+  msg.textContent = "";
+  try {
+    await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, oldPw));
+    await updatePassword(user, newPw);
+    closePasswordDialog();
+    toast("🔑 Neues Passwort gespeichert.", 4000);
+  } catch (err) {
+    console.error(err);
+    msg.textContent = ["auth/invalid-credential", "auth/wrong-password", "auth/invalid-login-credentials"].includes(err.code)
+      ? "Das bisherige Passwort stimmt nicht."
+      : authErrorText(err);
+  } finally {
+    $("pw-save").disabled = false;
+  }
+});
+
+$("leave").addEventListener("click", async () => {
+  const board = me();
+  if (!board || isOwner()) return;
+  const name = state.game?.name ?? "";
+  if (!confirm(`„${name}“ wirklich verlassen? Dein Feld wird dabei gelöscht. Zurück kommst du nur mit einem Einladungslink.`)) return;
+  const gameId = state.gameId;
+  const uid = state.user.uid;
+  closeGame(); // vorher, sonst hält die Seite das Verlassen für ein Entfernen
+  try {
+    const batch = writeBatch(db);
+    batch.delete(doc(db, "games", gameId, "boards", uid));
+    batch.delete(doc(db, "games", gameId, "members", uid));
+    batch.update(doc(db, "users", uid), { games: arrayRemove(gameId) });
+    await batch.commit();
+    toast(`🚪 Du hast „${name}“ verlassen.`, 4000);
+  } catch (err) {
+    console.error(err);
+    toast("Verlassen hat nicht geklappt. Bitte nochmal versuchen.", 5000);
+  }
+  storageRemove("bingoSpiel");
+  showHome();
+});
+
+// ---------- Anzeige ----------
+
+const me = () => (state.user && state.boards?.find((b) => b.id === state.user.uid)) || null;
+const isOwner = () => Boolean(state.user && state.game?.owner === state.user.uid);
+const locked = () => state.game?.locked === true;
+
+function render() {
+  if (!state.game || !state.boards || !state.dayDocs) return;
+  const board = me();
+  const listed = myGames().includes(state.gameId);
+
+  if (state.user && !board && listed && !isOwner() && !state.boardsFromCache) {
+    // Aus dem Spiel entfernt (oder zurückgesetzt)
+    const name = state.game.name;
+    const id = state.gameId;
+    closeGame();
+    forgetGames([id]);
+    toast(`Du bist bei „${name}“ nicht mehr dabei. Die Spielleitung hat dich entfernt.`, 6000);
+    return showHome();
+  }
+  if (state.user && board && !listed && !relisted.has(state.gameId)) {
+    // Feld vorhanden, aber nicht in der eigenen Liste (z. B. halb fehlgeschlagener Beitritt): nachtragen
+    relisted.add(state.gameId);
+    updateDoc(doc(db, "users", state.user.uid), { games: arrayUnion(state.gameId) }).catch(console.error);
+  }
+  if (isOwner() && !state.settingsStarted) {
+    state.settingsStarted = true;
+    gameUnsubs.push(settingsView.start(state.gameId));
+    if (!state.game.songsSeeded) seedSongs(state.gameId);
+  }
+
+  // Sichtbare Reiter: Gäste haben kein Feld, nur die Spielleitung hat „Spiel“
+  const mineTab = $("tabs").querySelector('[data-tab="mine"]');
+  const settingsTab = $("tabs").querySelector('[data-tab="settings"]');
+  const tabsChanged = mineTab.hidden !== !board || settingsTab.hidden !== !isOwner();
+  mineTab.hidden = !board;
+  settingsTab.hidden = !isOwner();
+
+  showScreen("game");
+  if (!tabs) tabs = initTabs($("tabs"), "bingoTab");
+  if (state.pendingTab) {
+    tabs.show(state.pendingTab, false);
+    state.pendingTab = null;
+  } else if (tabsChanged || state.firstRender) {
+    tabs.refresh();
+  }
+
+  $("game-bar").hidden = !state.user;
+  renderGuestBar(board);
+  greet(board ? `Hallo ${board.name}! ✨` : state.user ? `Hallo ${userName()}! ✨` : "Hallo! Schön, dass du zuschaust ✨");
+
+  if (board) renderMine(board);
   renderAll();
   renderCalendar();
   dayEditor.refresh();
   songsView.refresh();
+  if (isOwner()) settingsView.refresh();
 
   if (locked() && state.editIndex !== null) closeEditor();
-  firstRender = false;
+  state.firstRender = false;
 }
+
+function renderGuestBar(board) {
+  const bar = $("guest-bar");
+  const action = $("guest-action");
+  if (board) {
+    bar.hidden = true;
+    return;
+  }
+  bar.hidden = false;
+  if (!state.user) {
+    $("guest-text").textContent = "👀 Du schaust als Gast zu. ";
+    action.textContent = "Anmelden oder mitspielen";
+    action.hidden = false;
+  } else {
+    $("guest-text").textContent = "👀 Du schaust bei diesem Spiel nur zu. ";
+    action.textContent = "Mitspielen";
+    action.hidden = state.invite?.gameId !== state.gameId;
+  }
+}
+
+$("guest-action").addEventListener("click", () => {
+  if (!state.user) {
+    storageRemove("bingoGast");
+    closeGame();
+    showAuth();
+  } else if (state.invite?.gameId === state.gameId) {
+    closeGame();
+    showInvite();
+  }
+});
 
 function buildGrid() {
   const grid = $("grid");
   grid.innerHTML = Array.from({ length: CELL_COUNT }, (_, i) =>
     `<button type="button" class="cell" data-i="${i}" style="--i:${i}"><span class="cell-word"></span><span class="cell-day"></span></button>`,
   ).join("");
-  grid.addEventListener("animationend", (e) => {
-    if (e.animationName === "hit-pop") e.target.classList.remove("pop");
-  });
+  if (reducedMotion()) return;
   grid.classList.add("intro");
   setTimeout(() => grid.classList.remove("intro"), 1400);
 }
+
+$("grid").addEventListener("animationend", (e) => {
+  if (e.animationName === "hit-pop") e.target.classList.remove("pop");
+  if (e.animationName === "swap-in") e.target.classList.remove("swapped");
+});
 
 function renderMine(board) {
   const drawn = drawnMap(state.days);
   const score = scoreBoard(board, drawn);
   const isLocked = locked();
-  const canEdit = !isLocked && state.member;
+  const canEdit = !isLocked;
   const onLine = new Set(score.lines.flat());
 
   // Bingo-Hinweis + Konfetti, wenn eine neue Reihe dazukommt
@@ -483,16 +743,17 @@ function renderMine(board) {
   const n = score.lines.length;
   banner.hidden = n === 0;
   banner.textContent = n === 1 ? "🎉 BINGO! Du hast eine volle Reihe!" : `🎉 BINGO! Du hast ${n} volle Reihen!`;
-  const key = `bingoLines:${state.boardId}`;
+  const key = `bingoLines:${state.gameId}`;
   const seen = Number(storageGet(key) || 0);
-  if (n > seen) setTimeout(confetti, firstRender ? 600 : 150);
+  if (n > seen) setTimeout(confetti, state.firstRender ? 600 : 150);
   if (n !== seen) storageSet(key, String(n));
 
   // Status
   const free = CELL_COUNT - score.filled;
   $("status").innerHTML = isLocked
     ? "🔒 Die Felder sind gesperrt – jetzt heißt es abwarten!"
-    : `✏️ Tippe auf ein Feld, um ein Wort einzutragen${free ? ` · <strong>noch ${free} frei</strong>` : " · alles ausgefüllt 👍"}`;
+    : `✏️ Tippe auf ein Feld, um ein Wort einzutragen${free ? ` · <strong>noch ${free} frei</strong>` : " · alles ausgefüllt 👍"}
+       <small class="status-sub">↔️ Zum Tauschen ein Feld auf ein anderes ziehen (am Handy kurz gedrückt halten)</small>`;
   $("status").classList.toggle("locked", isLocked);
 
   // Feld
@@ -521,11 +782,7 @@ function renderMine(board) {
 
   $("progress").textContent = `${score.hits} von ${CELL_COUNT} Feldern getroffen`;
   $("progress-fill").style.width = `${(score.hits / CELL_COUNT) * 100}%`;
-}
-
-function renderAccount() {
-  $("pin-hint").hidden = Boolean(state.pinKey);
-  $("pin-open").textContent = state.pinKey ? "🔑 PIN ändern" : "🔑 PIN festlegen";
+  $("leave").hidden = isOwner();
 }
 
 const MEDALS = ["🥇", "🥈", "🥉"];
@@ -555,8 +812,9 @@ function renderAll(reorder = false) {
   const drawn = drawnMap(state.days);
   const rows = ranking(state.boards, drawn, rankMode);
   const boards = $("boards");
-  boards.innerHTML = rows.map((r, idx) => {
-    const isMe = r.board.id === state.boardId;
+  const myId = state.user?.uid;
+  boards.innerHTML = rows.length ? rows.map((r, idx) => {
+    const isMe = r.board.id === myId;
     const scored = rankMode === "hits" ? r.hits > 0 : r.bestLine > 0;
     const medal = scored && r.rank <= 3 ? MEDALS[r.rank - 1] : "";
     const main = rankMode === "hits"
@@ -568,13 +826,14 @@ function renderAll(reorder = false) {
         ${medal ? `<span class="medal" aria-hidden="true">${medal}</span>` : ""}
         <strong class="name">${escapeHtml(r.board.name)}</strong>
         ${isMe ? `<span class="tag">Du</span>` : ""}
+        ${r.board.id === state.game?.owner ? `<span class="tag soft">👑 Spielleitung</span>` : ""}
         ${r.lines.length ? `<span class="badge">BINGO ×${r.lines.length}</span>` : ""}
       </header>
       <p class="meta">${main} · ${r.filled}/${CELL_COUNT} ausgefüllt</p>
       <div class="progress-bar small"><span style="width:${(r.hits / CELL_COUNT) * 100}%"></span></div>
       ${miniGridHtml(r, drawn)}
     </article>`;
-  }).join("");
+  }).join("") : `<p class="intro-text">Noch spielt niemand mit.</p>`;
   // Nach dem Umschalten der Wertung die Karten in neuer Reihenfolge einblenden
   if (reorder && !reducedMotion()) {
     boards.classList.remove("reorder");
@@ -587,14 +846,15 @@ function renderAll(reorder = false) {
 
 function renderCalendar() {
   if (!state.boards || !state.dayDocs) return;
-  const board = state.guest ? null : me();
-  if (!state.guest && !board) return;
+  const board = me();
   $("calendar").innerHTML = calendarHtml(state.days, state.boards, {
-    myCells: board ? cellsOf(board) : [], songs: songsView.getDay,
+    myCells: board ? cellsOf(board) : [], admin: isOwner(), songs: songsView.getDay,
   });
-  $("calendar-note").textContent = board && canAddWords(board) && state.member
-    ? "Tippe auf ein Türchen, um die Wörter des Tages zu sehen oder einzutragen."
-    : "Tippe auf ein Türchen, um die Wörter des Tages zu sehen.";
+  $("calendar-note").textContent = isOwner()
+    ? "Tippe auf einen Tag, um Wörter einzutragen oder zu ändern. Als Spielleitung kannst du auch Türchen bearbeiten, die noch zu sind."
+    : board && canAddWords(board)
+      ? "Tippe auf ein Türchen, um die Wörter des Tages zu sehen oder einzutragen."
+      : "Tippe auf ein Türchen, um die Wörter des Tages zu sehen.";
 }
 
 // ---------- Kalender ----------
@@ -606,15 +866,15 @@ const dayEditor = createDayEditor({
   getSongs: (n) => songsView.getDay(n),
   onOpenSongs: (n) => { songsView.showDay(n); tabs?.show("songs"); },
   onSave: async (n, words) => {
+    const ref = doc(db, "games", state.gameId, "days", String(n));
     try {
-      await setDoc(doc(db, "days", String(n)), {
-        words, updatedBy: me()?.name ?? "", updatedAt: serverTimestamp(),
-      });
+      if (!words.length && isOwner()) await deleteDoc(ref);
+      else await setDoc(ref, { words, updatedBy: userName(), updatedAt: serverTimestamp() });
       toast(`🎁 ${n}. Dezember gespeichert`);
       return true;
     } catch (err) {
       console.error(err);
-      toast(canAddWords(me())
+      toast(canAddWords(me()) || isOwner()
         ? "Speichern hat nicht geklappt. Bitte nochmal versuchen."
         : "Du darfst gerade keine Tageswörter eintragen.");
       return false;
@@ -626,17 +886,47 @@ $("calendar").addEventListener("click", (e) => {
   const door = e.target.closest("[data-day]");
   if (!door) return;
   const n = Number(door.dataset.day);
+  if (isOwner()) return dayEditor.open(n, { canEdit: true });
   let note = "";
   if (!isDayOpen(n)) note = `🔒 Dieses Türchen öffnet sich am ${n}. Dezember.`;
-  else if (state.guest) return dayEditor.open(n, { canEdit: false });
+  else if (!me()) return dayEditor.open(n, { canEdit: false });
   else if (!canAddWords(me())) note = "Du darfst gerade keine Tageswörter eintragen.";
-  else if (!state.member) note = "Eintragen ist gerade nicht möglich. Lade die Seite bitte neu.";
   dayEditor.open(n, { canEdit: !note, note });
 });
 
 // ---------- Eingabe ins eigene Feld ----------
 
+const cellDrag = enableCellDrag($("grid"), {
+  canDrag: () => Boolean(me()) && !locked() && state.editIndex === null,
+  onSwap: swapMyCells,
+});
+
+/** Zwei Felder des eigenen Feldes tauschen (Drag & Drop). */
+async function swapMyCells(a, b) {
+  const board = me();
+  if (!board || a === b || locked()) return;
+  const cells = swapCells(cellsOf(board), a, b);
+  // Getroffene Felder wandern mit – sonst würde die Treffer-Animation fälschlich starten
+  if (state.prevMask) state.prevMask = swapCells(state.prevMask, a, b);
+  const saving = updateDoc(doc(db, "games", state.gameId, "boards", state.user.uid), { cells });
+  if (!reducedMotion()) {
+    for (const i of [a, b]) {
+      const cell = $("grid").children[i];
+      cell?.classList.remove("swapped");
+      void cell?.offsetWidth;
+      cell?.classList.add("swapped");
+    }
+  }
+  try {
+    await saving;
+  } catch (err) {
+    console.error(err);
+    toast(locked() ? "Die Felder sind inzwischen gesperrt." : "Tauschen hat nicht geklappt. Bitte nochmal versuchen.");
+  }
+}
+
 $("grid").addEventListener("click", (e) => {
+  if (cellDrag.wasDrag()) return;
   const btn = e.target.closest(".cell");
   if (!btn || btn.disabled) return;
   openEditor(Number(btn.dataset.i));
@@ -661,9 +951,10 @@ function closeEditor() {
 
 async function saveCell(value) {
   const i = state.editIndex;
-  if (i === null) return;
+  const board = me();
+  if (i === null || !board) return;
   const word = cleanWord(value);
-  const cells = cellsOf(me());
+  const cells = cellsOf(board);
 
   if (word && cells.some((c, j) => j !== i && normalize(c) === normalize(word))) {
     $("editor-msg").textContent = "Dieses Wort steht schon in einem anderen Feld.";
@@ -673,7 +964,7 @@ async function saveCell(value) {
   cells[i] = word;
   closeEditor();
   try {
-    await updateDoc(doc(db, "boards", state.boardId), { cells });
+    await updateDoc(doc(db, "games", state.gameId, "boards", state.user.uid), { cells });
   } catch (err) {
     console.error(err);
     toast(locked()
@@ -692,5 +983,8 @@ $("editor").addEventListener("click", (e) => { if (e.target === $("editor")) clo
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
   if (state.editIndex !== null) closeEditor();
-  else if (!$("pin-dialog").hidden) closePinDialog();
+  else if (!$("pw-dialog").hidden) closePasswordDialog();
 });
+
+// Türchen öffnen sich um Mitternacht
+setInterval(renderCalendar, 60_000);

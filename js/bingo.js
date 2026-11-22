@@ -168,32 +168,40 @@ export function randomId(length = 12) {
   return Array.from(rnd, (x) => ALPHABET[x % ALPHABET.length]).join("");
 }
 
-/** Lesbarer, schwer zu erratender Code für den persönlichen Link, z. B. "oma-k7m2x9qp". */
-export function makePlayerCode(name) {
-  const slug = normalize(name)
-    .replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 20);
-  const suffix = randomId(10);
-  return slug ? `${slug}-${suffix}` : suffix;
+// ---------- Konten ----------
+
+export const MIN_NAME_LENGTH = 2;
+export const MAX_NAME_LENGTH = 30;
+export const MIN_PASSWORD_LENGTH = 6; // Mindestlänge von Firebase
+export const MAX_GAME_NAME_LENGTH = 40;
+
+/** Benutzer- oder Spielname: überflüssige Leerzeichen weg. */
+export function cleanName(name, max = MAX_NAME_LENGTH) {
+  return String(name ?? "").replace(/\s+/g, " ").trim().slice(0, max);
 }
 
-// ---------- PIN ----------
-
-/** 4 bis 8 Ziffern. */
-export function isValidPin(pin) {
-  return /^\d{4,8}$/.test(String(pin ?? ""));
+export function isValidName(name) {
+  const n = cleanName(name, 1000);
+  return n.length >= MIN_NAME_LENGTH && n.length <= MAX_NAME_LENGTH;
 }
 
 /**
- * Schlüssel des Anmelde-Dokuments logins/{key}: SHA-256 aus Feld und PIN.
- * Wer Name und PIN kennt, findet darüber seinen geheimen Spieler-Code.
+ * Firebase braucht eine E-Mail-Adresse. Aus dem Benutzernamen wird eine erfundene gemacht
+ * (Groß/Klein egal), an die nie etwas geschickt wird. Gleicher Name = gleiche Adresse,
+ * deshalb gibt es jeden Benutzernamen nur einmal.
  */
-export async function pinKey(boardId, pin) {
-  const data = new TextEncoder().encode(`weihnachtsbingo:${boardId}:${pin}`);
+export async function accountEmail(name) {
+  const data = new TextEncoder().encode(`weihnachtsbingo-konto:${normalize(name)}`);
   const hash = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(hash), (b) => b.toString(16).padStart(2, "0")).join("");
+  const hex = Array.from(new Uint8Array(hash), (b) => b.toString(16).padStart(2, "0")).join("");
+  return `u-${hex.slice(0, 40)}@weihnachtsbingo.example.com`;
+}
+
+/** Zwei Felder tauschen (Drag & Drop im eigenen Feld). */
+export function swapCells(cells, a, b) {
+  const out = [...cells];
+  [out[a], out[b]] = [out[b], out[a]];
+  return out;
 }
 
 export function escapeHtml(s) {
@@ -220,11 +228,11 @@ export function songId(title) {
     .slice(0, 80);
 }
 
-/** Lieder eines Tages aus dem Dokument songDays/{n}: { picked: [{ title, by }], random: [title] } */
+/** Lieder eines Tages aus dem Dokument songDays/{n}: { picked: [{ title, by, uid }], random: [title] } */
 export function songDayOf(data) {
   const picked = (Array.isArray(data?.picked) ? data.picked : [])
     .filter((p) => p && String(p.title ?? "").trim())
-    .map((p) => ({ title: String(p.title), by: String(p.by ?? "") }));
+    .map((p) => ({ title: String(p.title), by: String(p.by ?? ""), uid: String(p.uid ?? "") }));
   const random = (Array.isArray(data?.random) ? data.random : []).map(String).filter((t) => t.trim());
   return { picked, random };
 }

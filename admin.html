@@ -2,124 +2,14 @@
 <html lang="de">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0b2a1f">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex">
-  <title>Bingo Spielleitung</title>
-  <link rel="icon" href="icon.svg" type="image/svg+xml">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Mountains+of+Christmas:wght@700&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css">
+  <title>Weihnachtsbingo 2026</title>
+  <!-- Die Spielleitung ist jetzt der Reiter „Spiel“ in index.html (für alle, die ein Spiel erstellt haben). -->
+  <meta http-equiv="refresh" content="0; url=index.html">
+  <script>location.replace("index.html");</script>
 </head>
-<body class="admin">
-  <header class="top">
-    <div class="garland" aria-hidden="true"></div>
-    <h1><span class="star" aria-hidden="true">★</span> Spielleitung</h1>
-    <p class="greeting">Weihnachtsbingo 2026 🎅</p>
-  </header>
-
-  <main class="wrap">
-    <div id="error" class="card center error" hidden></div>
-
-    <!-- Anmeldung -->
-    <form id="login" class="card pop-in" hidden>
-      <h2>Anmelden</h2>
-      <label>E-Mail <input id="login-email" type="email" autocomplete="username" required></label>
-      <label>Passwort <input id="login-pass" type="password" autocomplete="current-password" required></label>
-      <p id="login-msg" class="msg"></p>
-      <button type="submit" class="btn primary block">Anmelden</button>
-    </form>
-
-    <div id="admin" hidden>
-      <!-- Sperre -->
-      <section class="card lock-card" id="lock-card">
-        <div class="lock-row">
-          <span class="lock-icon" id="lock-icon" aria-hidden="true">✏️</span>
-          <div class="lock-text">
-            <strong id="lock-title">Felder offen</strong>
-            <span id="lock-sub" class="muted">Spieler können ihre Felder bearbeiten.</span>
-          </div>
-          <label class="switch big" title="Felder sperren / entsperren">
-            <input type="checkbox" id="lock-toggle" aria-label="Felder sperren">
-            <span></span>
-          </label>
-        </div>
-      </section>
-
-      <nav class="tabs" id="tabs" role="tablist">
-        <button type="button" data-tab="players" role="tab">👥 <span>Spieler</span></button>
-        <button type="button" data-tab="calendar" role="tab">📅 <span>Kalender</span></button>
-        <button type="button" data-tab="songs" role="tab">🎶 <span>Lieder</span></button>
-        <span class="tab-ind" aria-hidden="true"></span>
-      </nav>
-
-      <!-- Spieler -->
-      <section class="view" data-view="players" hidden>
-        <section class="card">
-          <h2>Einladungslink</h2>
-          <p class="muted">Wer diesen Link öffnet, kann sich selbst als Spieler eintragen. Du kannst ihn einfach in die Familiengruppe schicken.</p>
-          <input id="invite-link" type="text" readonly aria-label="Einladungslink" value="Wird geladen …">
-          <div class="row wrap-row actions">
-            <button type="button" class="btn small" id="invite-copy">🔗 Link kopieren</button>
-            <a class="btn small" id="invite-wa" target="_blank" rel="noopener">💬 WhatsApp</a>
-            <button type="button" class="btn small ghost danger" id="invite-renew">Neuen Link erzeugen</button>
-          </div>
-          <label class="perm">
-            <span>Neue Spieler dürfen beitreten</span>
-            <span class="switch"><input type="checkbox" id="invite-open"><span></span></span>
-          </label>
-        </section>
-        <div id="players" class="boards"></div>
-
-        <section class="card danger-card">
-          <h2>Spiel zurücksetzen</h2>
-          <p class="muted">Entfernt alle Spieler mit ihren Feldern und die Lieder aller Abende. Der Liederpool und der Einladungslink bleiben.</p>
-          <button type="button" class="btn ghost danger block" id="reset-open">🗑️ Spiel zurücksetzen …</button>
-        </section>
-      </section>
-
-      <!-- Kalender -->
-      <section class="view" data-view="calendar" hidden>
-        <p class="intro-text">Tippe auf einen Tag, um Wörter einzutragen oder zu ändern. Als Spielleitung kannst du auch Türchen bearbeiten, die noch zu sind.</p>
-        <div id="calendar" class="calendar"></div>
-      </section>
-
-      <!-- Weihnachtslieder (Inhalt baut js/songs.js) -->
-      <section class="view" data-view="songs" id="songs" hidden></section>
-
-      <p class="center"><button type="button" id="logout" class="btn ghost light">Abmelden</button></p>
-    </div>
-  </main>
-
-  <!-- Spiel zurücksetzen -->
-  <div id="reset-dialog" class="overlay" hidden>
-    <form id="reset-form" class="dialog" autocomplete="off" role="dialog" aria-modal="true" aria-labelledby="reset-title">
-      <h2 id="reset-title">Spiel zurücksetzen?</h2>
-      <p>Das wird gelöscht:</p>
-      <ul class="reset-list">
-        <li>alle Spieler, ihre Felder, persönlichen Links und PINs</li>
-        <li>die Lieder aller Abende</li>
-      </ul>
-      <label class="check">
-        <input type="checkbox" id="reset-words">
-        <span>Auch die Wörter im Kalender löschen</span>
-      </label>
-      <p class="muted">Bleibt erhalten: Liederpool und Einladungslink. Die Felder werden entsperrt.
-        <strong>Das lässt sich nicht rückgängig machen.</strong></p>
-      <label>Zum Bestätigen <strong>RESET</strong> eintippen
-        <input id="reset-confirm" type="text" autocapitalize="characters" enterkeyhint="done">
-      </label>
-      <p id="reset-msg" class="msg"></p>
-      <div class="buttons">
-        <button type="button" id="reset-cancel" class="btn ghost">Abbrechen</button>
-        <button type="submit" id="reset-go" class="btn primary danger-fill">Endgültig zurücksetzen</button>
-      </div>
-    </form>
-  </div>
-
-  <div id="toast" class="toast" role="status"></div>
-
-  <script type="module" src="js/admin.js"></script>
+<body>
+  <p><a href="index.html">Weiter zum Weihnachtsbingo</a></p>
 </body>
 </html>

@@ -27,66 +27,82 @@
 
     <div id="error" class="card center error" hidden></div>
 
-    <!-- Einladungslink: neu mitspielen, als bestehender Spieler anmelden oder nur zuschauen -->
-    <div id="join" class="card pop-in" hidden>
-      <div id="join-start" class="join-step">
-        <h2>Weihnachtsbingo 🎄</h2>
-        <p class="muted">Du wurdest eingeladen! Was möchtest du tun?</p>
-        <div class="choices">
-          <button type="button" class="btn primary block" data-mode="join-new">🎁 Neu mitspielen</button>
-          <button type="button" class="btn block" data-mode="join-login">🔑 Ich spiele schon mit</button>
-          <button type="button" class="btn ghost block" data-mode="guest">👀 Nur zuschauen</button>
-        </div>
+    <!-- Anmelden oder Konto erstellen -->
+    <div id="auth" class="card pop-in" hidden>
+      <p id="auth-invite" class="dd-note auth-invite" hidden></p>
+      <div class="seg on-paper" id="auth-mode" role="radiogroup" aria-label="Anmelden oder Konto erstellen">
+        <button type="button" data-mode="login" role="radio">🔑 <span>Anmelden</span></button>
+        <button type="button" data-mode="register" role="radio">🎁 <span>Konto erstellen</span></button>
       </div>
-
-      <form id="join-new" class="join-step" autocomplete="off" hidden>
-        <h2>Neu mitspielen 🎁</h2>
-        <label>Dein Name
-          <input id="join-name" type="text" maxlength="30" placeholder="z. B. Oma" required>
-        </label>
-        <p class="hint">Unter diesem Namen sehen dich die anderen.</p>
-        <label>Deine PIN (4 bis 8 Ziffern)
-          <input id="join-pin" type="text" inputmode="numeric" maxlength="8" placeholder="z. B. 2412" required enterkeyhint="go">
-        </label>
-        <p class="hint">Damit meldest du dich auf anderen Geräten an. Gut merken!</p>
-        <p id="join-msg" class="msg"></p>
-        <button type="submit" id="join-btn" class="btn primary block">Beitreten</button>
-        <button type="button" class="btn ghost block" data-mode="join-start">Zurück</button>
+      <form id="auth-form" autocomplete="on">
+        <label for="auth-name">Benutzername</label>
+        <input id="auth-name" type="text" maxlength="30" autocomplete="username" autocapitalize="words" required>
+        <p class="hint" data-only="register">Unter diesem Namen sehen dich die anderen, z. B. „Oma Erika“. Beim Anmelden ist Groß- und Kleinschreibung egal.</p>
+        <label for="auth-pass">Passwort</label>
+        <div class="pw-field">
+          <input id="auth-pass" type="password" autocomplete="current-password" required enterkeyhint="go">
+          <button type="button" class="pw-toggle" aria-label="Passwort anzeigen" aria-pressed="false">👁️</button>
+        </div>
+        <p class="hint" data-only="register">Mindestens 6 Zeichen. <strong>Gut merken</strong> – ein vergessenes Passwort lässt sich nicht zurücksetzen.</p>
+        <p id="auth-msg" class="msg"></p>
+        <button type="submit" id="auth-btn" class="btn primary block">Anmelden</button>
       </form>
+      <button type="button" id="auth-guest" class="btn ghost block auth-guest" hidden>👀 Nur zuschauen</button>
+    </div>
 
-      <form id="join-login" class="join-step" autocomplete="off" hidden>
-        <h2>Anmelden 🔑</h2>
-        <label>Wer bist du?
-          <select id="login-name" required></select>
-        </label>
-        <label>Deine PIN
-          <input id="login-pin" type="text" inputmode="numeric" maxlength="8" required enterkeyhint="go">
-        </label>
-        <p id="login-msg" class="msg"></p>
-        <button type="submit" id="login-btn" class="btn primary block">Anmelden</button>
-        <button type="button" class="btn ghost block" data-mode="join-start">Zurück</button>
-      </form>
+    <!-- Meine Spiele -->
+    <div id="home" hidden>
+      <p class="intro-text">🎄 Deine Spiele</p>
+      <div id="home-games" class="game-list"></div>
+      <section class="card">
+        <h2>➕ Neues Spiel erstellen</h2>
+        <p class="muted">Du wirst die Spielleitung: Du verschickst den Einladungslink, sperrst die Felder und verwaltest die Mitspieler. Mitspielen tust du natürlich auch.</p>
+        <form id="create-form" class="row" autocomplete="off">
+          <input id="create-name" type="text" maxlength="40" placeholder="z. B. Familie Müller" aria-label="Name des neuen Spiels" enterkeyhint="go">
+          <button type="submit" id="create-btn" class="btn primary">Erstellen</button>
+        </form>
+        <p class="hint">Bei einem anderen Spiel mitmachen? Dann öffne einfach den Einladungslink, den du bekommen hast.</p>
+      </section>
+      <p class="center account-row">
+        <button type="button" class="btn ghost light" data-action="password">🔑 Passwort ändern</button>
+        <button type="button" class="btn ghost light" data-action="logout">Abmelden</button>
+      </p>
+    </div>
+
+    <!-- Einladung annehmen (angemeldet, aber noch nicht dabei) -->
+    <div id="invite" class="card pop-in" hidden>
+      <h2>Einladung 🎄</h2>
+      <p>Du wurdest zum Weihnachtsbingo <strong id="invite-game"></strong> eingeladen.</p>
+      <p id="invite-owner" class="muted"></p>
+      <p id="invite-msg" class="msg"></p>
+      <div class="choices">
+        <button type="button" id="invite-join" class="btn primary block">🎁 Mitspielen</button>
+        <button type="button" id="invite-watch" class="btn block">👀 Nur zuschauen</button>
+        <button type="button" class="btn ghost block" data-action="home">Zu meinen Spielen</button>
+      </div>
     </div>
 
     <div id="game" hidden>
+      <!-- Spiel wechseln (nur angemeldet) -->
+      <div id="game-bar" class="game-bar" hidden>
+        <button type="button" class="game-home" data-action="home" aria-label="Meine Spiele" title="Meine Spiele">🏠</button>
+        <select id="game-switch" aria-label="Spiel wechseln"></select>
+      </div>
       <div id="guest-bar" class="pill" hidden>
-        👀 Du schaust als Gast zu.
-        <button type="button" id="guest-leave" class="link-btn">Mitspielen oder anmelden</button>
+        <span id="guest-text"></span>
+        <button type="button" id="guest-action" class="link-btn"></button>
       </div>
       <nav class="tabs stacked" id="tabs" role="tablist">
         <button type="button" data-tab="mine" role="tab">🎄 <span>Mein Feld</span></button>
         <button type="button" data-tab="all" role="tab">👀 <span>Alle Felder</span></button>
         <button type="button" data-tab="calendar" role="tab">📅 <span>Kalender</span></button>
         <button type="button" data-tab="songs" role="tab">🎶 <span>Lieder</span></button>
+        <button type="button" data-tab="settings" role="tab" hidden>⚙️ <span>Spiel</span></button>
         <span class="tab-ind" aria-hidden="true"></span>
       </nav>
 
       <!-- Mein Feld -->
       <section class="view" data-view="mine" hidden>
-        <div id="pin-hint" class="pin-hint" hidden>
-          🔑 Lege eine PIN fest, damit du dich auch auf anderen Geräten anmelden kannst.
-          <button type="button" id="pin-hint-btn" class="btn small primary">PIN festlegen</button>
-        </div>
         <div id="bingo" class="bingo-banner" hidden></div>
         <p id="status" class="pill"></p>
         <div id="grid" class="grid board" role="grid" aria-label="Dein Bingo-Feld"></div>
@@ -95,8 +111,9 @@
           <p id="progress" class="progress"></p>
         </div>
         <p class="center account-row">
-          <button type="button" id="pin-open" class="btn ghost light">🔑 PIN ändern</button>
-          <button type="button" id="logout" class="btn ghost light">Abmelden</button>
+          <button type="button" class="btn ghost light" data-action="password">🔑 Passwort ändern</button>
+          <button type="button" id="leave" class="btn ghost light">🚪 Spiel verlassen</button>
+          <button type="button" class="btn ghost light" data-action="logout">Abmelden</button>
         </p>
       </section>
 
@@ -118,6 +135,9 @@
 
       <!-- Weihnachtslieder (Inhalt baut js/songs.js) -->
       <section class="view" data-view="songs" id="songs" hidden></section>
+
+      <!-- Einstellungen der Spielleitung (Inhalt baut js/settings.js) -->
+      <section class="view" data-view="settings" id="settings" hidden></section>
     </div>
   </main>
 
@@ -136,17 +156,24 @@
     </form>
   </div>
 
-  <!-- PIN festlegen / ändern -->
-  <div id="pin-dialog" class="overlay" hidden>
-    <form id="pin-form" class="dialog" autocomplete="off" role="dialog" aria-modal="true" aria-labelledby="pin-title">
-      <h2 id="pin-title">PIN festlegen</h2>
-      <p class="muted">Mit deinem Namen und dieser PIN meldest du dich auf anderen Geräten an.</p>
-      <input id="pin-input" type="text" inputmode="numeric" maxlength="8" enterkeyhint="done"
-             placeholder="4 bis 8 Ziffern" aria-label="PIN">
-      <p id="pin-msg" class="msg"></p>
+  <!-- Passwort ändern -->
+  <div id="pw-dialog" class="overlay" hidden>
+    <form id="pw-form" class="dialog" autocomplete="off" role="dialog" aria-modal="true" aria-labelledby="pw-title">
+      <h2 id="pw-title">Passwort ändern</h2>
+      <label for="pw-old">Bisheriges Passwort</label>
+      <div class="pw-field">
+        <input id="pw-old" type="password" autocomplete="current-password">
+        <button type="button" class="pw-toggle" aria-label="Passwort anzeigen" aria-pressed="false">👁️</button>
+      </div>
+      <label for="pw-new">Neues Passwort (mindestens 6 Zeichen)</label>
+      <div class="pw-field">
+        <input id="pw-new" type="password" autocomplete="new-password" enterkeyhint="done">
+        <button type="button" class="pw-toggle" aria-label="Passwort anzeigen" aria-pressed="false">👁️</button>
+      </div>
+      <p id="pw-msg" class="msg"></p>
       <div class="buttons">
-        <button type="button" id="pin-cancel" class="btn ghost">Abbrechen</button>
-        <button type="submit" id="pin-save" class="btn primary">Speichern</button>
+        <button type="button" id="pw-cancel" class="btn ghost">Abbrechen</button>
+        <button type="submit" id="pw-save" class="btn primary">Speichern</button>
       </div>
     </form>
   </div>
