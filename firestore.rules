@@ -7,8 +7,11 @@ rules_version = '2';
 // wer ein Spiel erstellt, ist dort die Spielleitung (owner).
 //
 // Aufbau:
-//   users/{uid}                  { name, games }                        eigenes Konto, Liste der eigenen Spiele
-//   games/{g}                    { name, owner, ownerName, locked, songsSeeded, createdAt }
+//   users/{uid}                  { name, games, email?, loginKey? }     eigenes Konto, Liste der eigenen Spiele
+//   names/{nameKey}              { uid }                                Benutzername vergeben (bei hinterlegter E-Mail)
+//   logins/{loginKey}            { email, uid }                         freiwillige E-Mail fürs Anmelden mit Benutzername;
+//                                                                         ID = Schlüssel aus Name + Passwort
+//   games/{g}                    { name, owner, ownerName, locked, songsEnabled, songsSeeded, createdAt }
 //   games/{g}/private/invite     { code, open }                         geheimer Einladungscode (nur Spielleitung)
 //   games/{g}/members/{uid}      { invite, joinedAt }                   Nachweis, dass man eingeladen wurde
 //   games/{g}/boards/{uid}       { name, cells, canAddWords }           öffentliches Bingo-Feld, ID = Konto
@@ -53,6 +56,11 @@ service cloud.firestore {
       return get(boardPath(g, request.auth.uid)).data;
     }
 
+    // Lieder bei diesem Spiel eingeschaltet (ältere Spiele ohne Angabe: ja)
+    function songsOn(g) {
+      return get(gamePath(g)).data.get('songsEnabled', true) == true;
+    }
+
     function fieldsLocked(g) {
       return get(gamePath(g)).data.get('locked', false) == true;
     }
@@ -90,10 +98,44 @@ service cloud.firestore {
         && request.resource.data.games is list
         && request.resource.data.games.size() == 0;
       // Der Name bleibt fest, nur die Liste der Spiele ändert sich
+      // Der Name bleibt fest; ändern dürfen sich die Liste der Spiele und die freiwillige E-Mail
       allow update: if signedIn() && request.auth.uid == userId
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['games'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['games', 'email', 'loginKey'])
         && request.resource.data.games is list
-        && request.resource.data.games.size() <= 50;
+        && request.resource.data.games.size() <= 50
+        && (!('email' in request.resource.data) || (request.resource.data.email is string
+              && request.resource.data.email.size() <= 254))
+        && (!('loginKey' in request.resource.data) || request.resource.data.loginKey is string);
+    }
+
+    // Vergebene Benutzernamen (nur nötig, wenn das Konto eine echte E-Mail-Adresse bekommt)
+    match /names/{key} {
+      allow get: if true;
+      allow list, update: if false;
+      allow create: if signedIn() && key.matches('^[a-f0-9]{64}$')
+        && request.resource.data.keys().hasOnly(['uid'])
+        && request.resource.data.uid == request.auth.uid;
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    // Anmelden mit Benutzername, wenn das Konto eine echte E-Mail-Adresse hat.
+    // Die ID entsteht aus Benutzername + Passwort, finden kann den Eintrag also nur, wer beides kennt.
+    // email = zuletzt eingetragene Adresse, alt = bisher bestätigte (solange die neue noch nicht bestätigt ist)
+    function validLogin(key) {
+      let d = request.resource.data;
+      return signedIn() && key.matches('^[a-f0-9]{64}$')
+        && d.keys().hasOnly(['email', 'alt', 'uid'])
+        && d.uid == request.auth.uid
+        && d.email is string && d.email.size() <= 254
+        && d.get('alt', '') is string && d.get('alt', '').size() <= 254;
+    }
+
+    match /logins/{key} {
+      allow get: if true;
+      allow list: if false;
+      allow create: if validLogin(key);
+      allow update: if validLogin(key) && resource.data.uid == request.auth.uid;
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
     }
 
     // ---------- Spiele ----------
@@ -104,18 +146,20 @@ service cloud.firestore {
       allow list: if false;
       allow create: if signedIn()
         && g.matches('^[a-z0-9]{16,32}$')
-        && request.resource.data.keys().hasOnly(['name', 'owner', 'ownerName', 'locked', 'songsSeeded', 'createdAt'])
+        && request.resource.data.keys().hasOnly(['name', 'owner', 'ownerName', 'locked', 'songsEnabled', 'songsSeeded', 'createdAt'])
         && request.resource.data.owner == request.auth.uid
         && validGameName(request.resource.data.name)
         && request.resource.data.ownerName is string
         && request.resource.data.ownerName.size() <= 30
         && request.resource.data.locked == false
+        && request.resource.data.get('songsEnabled', true) is bool
         && request.resource.data.get('songsSeeded', false) is bool
         && request.resource.data.createdAt == request.time;
       allow update: if signedIn() && resource.data.owner == request.auth.uid
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'locked', 'songsSeeded'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'locked', 'songsEnabled', 'songsSeeded'])
         && validGameName(request.resource.data.name)
         && request.resource.data.locked is bool
+        && request.resource.data.get('songsEnabled', true) is bool
         && request.resource.data.songsSeeded is bool;
       allow delete: if signedIn() && resource.data.owner == request.auth.uid;
 
@@ -180,13 +224,13 @@ service cloud.firestore {
           && request.resource.data.updatedAt == request.time;
       }
 
-      // Liederpool: alle lesen, Spieler ergänzen Lieder. Entfernen darf, wer das Lied
-      // ergänzt hat, und die Spielleitung.
+      // Liederpool: alle lesen, Spieler ergänzen Lieder (nur wenn die Lieder eingeschaltet sind).
+      // Entfernen darf, wer das Lied ergänzt hat, und die Spielleitung.
       match /songs/{songId} {
         allow read: if true;
         allow update: if false;
         allow delete: if signedIn() && (resource.data.get('addedByUid', '') == request.auth.uid || isOwner(g));
-        allow create: if (isOwnerAfter(g) || isPlayer(g))
+        allow create: if (isOwnerAfter(g) || (isPlayer(g) && songsOn(g)))
           && songId.matches('^[a-z0-9-]{1,80}$')
           && request.resource.data.keys().hasOnly(['title', 'addedBy', 'addedByUid'])
           && request.resource.data.title is string
@@ -212,9 +256,9 @@ service cloud.firestore {
         allow read: if true;
         allow delete: if isOwner(g);
         allow create: if validDay(day) && validSongDay()
-          && (isOwner(g) || (isPlayer(g) && allMine(request.resource.data.picked)));
+          && (isOwner(g) || (isPlayer(g) && songsOn(g) && allMine(request.resource.data.picked)));
         allow update: if validDay(day) && validSongDay() && (isOwner(g) || (
-          isPlayer(g)
+          isPlayer(g) && songsOn(g)
           // entfernte und neu hinzugekommene ausgesuchte Lieder müssen alle die eigenen sein
           && allMine(resource.data.picked.removeAll(request.resource.data.picked))
           && allMine(request.resource.data.picked.removeAll(resource.data.picked))

@@ -21,29 +21,35 @@ Deploying means uploading the files to GitHub Pages and pasting `firestore.rules
 
 Everything runs on one page, `index.html`. `admin.html` only redirects there (old bookmarks).
 
-- `js/bingo.js`: pure game logic with no DOM or Firebase code (normalizing words, hit masks, bingo lines, ranking, Advent-day helpers, `SEASON_YEAR`, account helpers `cleanName`/`isValidName`/`accountEmail`, `swapCells`).
+- `js/bingo.js`: pure game logic with no DOM or Firebase code (normalizing words, hit masks, bingo lines, ranking, Advent-day helpers, `SEASON_YEAR`, account helpers `cleanName`/`isValidName`/`accountEmail`/`nameKey`/`loginKey`/`isValidEmail`/`isAccountEmail`, `gameIdFrom`, `songsEnabled`, `swapCells`).
 - `js/ui.js`: shared UI building blocks (tabs with a sliding indicator that skip `hidden` buttons and expose `refresh()`, snow/confetti canvas, overlay open/close animation, toast, `copyText`, password eye toggles `initPasswordToggles`/`resetPasswords`, pointer-based drag & drop for the own grid `enableCellDrag`, Advent-calendar HTML, mini grid HTML, and the day-word editor dialog `createDayEditor`).
 - `js/songs.js`: the "Lieder" tab (`createSongsView`, `start(gameId)` returns an unsubscribe function), plus `DEFAULT_SONGS`/`seedDefaultSongs(gameId, uid)`. Pure song helpers (`songId`, `songDayOf`, `pickRandomSongs`, `SONGS_PER_DAY`) live in `bingo.js`.
-- `js/settings.js`: the owner-only "Spiel" tab (`createSettingsView`): lock, rename, invite link, player cards, reset and delete game.
+- `js/settings.js`: the owner-only "Spiel" tab (`createSettingsView`): lock, rename, songs on/off, invite link, watch link (`watchLink`), player cards, reset and delete game.
 - `js/app.js`: screens (auth, "Meine Spiele", invite, game), game switching and the player views.
 - `js/firebase.js` / `js/firebase-config.js`: Firebase init.
 
 ### Accounts
 
-Every player has a Firebase email/password account. Users type only a **username**; `accountEmail(name)` turns it into a made-up address (`u-<sha256 of normalize(name)>@weihnachtsbingo.example.com`), so usernames are unique and case-insensitive, and no mail is ever sent (so passwords cannot be reset, only changed while logged in via re-authentication). `users/{uid}` holds the display name and the list of game IDs. Guests without an account can still watch a game whose ID they know (`bingoGast` in localStorage).
+Every player has a Firebase email/password account. Users type only a **username**; `accountEmail(name)` turns it into a made-up address (`u-<sha256 of normalize(name)>@weihnachtsbingo.example.com`), so usernames are unique and case-insensitive, and no mail is ever sent (so passwords cannot be reset, only changed while logged in via re-authentication). `users/{uid}` holds the display name and the list of game IDs.
+
+Optional real email (for password reset): `verifyBeforeUpdateEmail` turns the account's synthetic address into the real one after the user clicks the link. Because login still uses the username, `logins/{loginKey(name, password)}` (PBKDF2 of name + password, so only someone who knows both can read it) stores `{ email, alt?, uid }`; `alt` is the previously confirmed address while a new one is pending. `signInWithName()` tries the stored addresses, then the synthetic one. `syncLoginKey()` rewrites the doc after every login, password change and email change (after a reset by email the old key is stale, so the user logs in once with the email address, which the login field accepts). `names/{nameKey(name)}` reserves the username once the synthetic address is freed; registration checks it first. `users/{uid}` additionally holds `email` and `loginKey`. A stored email can be changed but not removed.
+
+Guests without an account can watch any game whose ID they know: the watch link `index.html?spiel=<g>&zuschauen=1` opens it directly, the auth screen offers "Als Gast zuschauen" (with a paste-the-link form when the URL has no game), and the last watched game is remembered as `bingoGast` in localStorage.
 
 ### Firestore data model and trust model
 
 | Path | Content | Access |
 |---|---|---|
-| `users/{uid}` | `{ name, games[] }`: display name (fixed after create) and the user's games | own uid only; update only `games` |
-| `games/{g}` | `{ name, owner, ownerName, locked, songsSeeded, createdAt }`. `owner` (creator) is the game master | `get` by anyone, `list` by nobody; create with `owner == auth.uid`; update (`name`, `locked`, `songsSeeded`) and delete by owner |
+| `users/{uid}` | `{ name, games[], email?, loginKey? }`: display name (fixed after create), the user's games, optional email | own uid only; update only `games`, `email`, `loginKey` |
+| `names/{nameKey}` | `{ uid }`: reserved username (only written when adding an email) | `get` by anyone; create/delete by that uid |
+| `logins/{loginKey}` | `{ email, alt?, uid }`: username login for accounts with a real email | `get` by anyone, no `list`; create/update/delete by that uid |
+| `games/{g}` | `{ name, owner, ownerName, locked, songsEnabled, songsSeeded, createdAt }`. `owner` (creator) is the game master; `songsEnabled` missing = on | `get` by anyone, `list` by nobody; create with `owner == auth.uid`; update (`name`, `locked`, `songsEnabled`, `songsSeeded`) and delete by owner |
 | `games/{g}/private/invite` | `{ code, open }`: secret invite code for `index.html?spiel=<g>&einladung=<code>` | owner only (rules still `get()` it) |
 | `games/{g}/members/{uid}` | `{ invite, joinedAt }`: private proof of invitation | read/delete by self or owner; create by self with a valid open invite, only together with the board (`existsAfter`) |
 | `games/{g}/boards/{uid}` | `{ name, cells[25], canAddWords }`: public bingo board; doc ID = account uid | read all; create by self (empty cells, name = `users/{uid}.name`) if owner or with a `members` doc in the same batch; self may change only `cells` while not locked; owner may change only `canAddWords`; delete by self (leave) or owner (remove) |
 | `games/{g}/days/{1..24}` | `{ words[], updatedBy, updatedAt }` | read all; write by owner or by players whose board has `canAddWords != false` |
-| `games/{g}/songs/{songId}` | `{ title, addedBy, addedByUid }`: song pool; doc ID = `songId(title)` slug | read all; create by owner or players (`addedByUid == auth.uid`); delete by the adder or the owner |
-| `games/{g}/songDays/{1..24}` | `{ picked: [{ title, by, uid }], random: [title], updatedAt }`: up to 3 songs per evening | read all; write by owner or any player; players may only add or remove `picked` entries carrying their own `uid` (`allMine()` on both `removeAll` diffs) |
+| `games/{g}/songs/{songId}` | `{ title, addedBy, addedByUid }`: song pool; doc ID = `songId(title)` slug | read all; create by owner or players (`addedByUid == auth.uid`, only while `songsOn(g)`); delete by the adder or the owner |
+| `games/{g}/songDays/{1..24}` | `{ picked: [{ title, by, uid }], random: [title], updatedAt }`: up to 3 songs per evening | read all; write by owner or any player (players only while `songsOn(g)`); players may only add or remove `picked` entries carrying their own `uid` (`allMine()` on both `removeAll` diffs) |
 
 Old top-level collections (`game`, `players`, `logins`, `boards`, …) from the previous single-game version are no longer read or covered by the rules.
 
@@ -54,7 +60,7 @@ Flows (all multi-doc writes are **one batch** so the rules can cross-check with 
 - Owner removes a player: delete board + member. The removed player's `users.games` is cleaned up by their own client when it sees a server snapshot without its board (`render()` in `app.js`); deleted games are cleaned up the same way (`gameGone()`, `loadGameInfos()`).
 - Reset (`resetGame()` in `settings.js`): unlock, delete other boards, members, `songDays` (optionally `days`), clear the owner's cells. Delete game: all subcollections, then the game doc.
 
-Switching games happens in place: `openGame()` unsubscribes everything in `gameUnsubs` (`closeGame()`), resets the per-game state and subscribes again. The settings listener is started only for the owner.
+Switching games happens in place: `openGame()` unsubscribes everything in `gameUnsubs` (`closeGame()`), resets the per-game state and subscribes again. The settings listener is started only for the owner. The songs listener is separate (`songsUnsub`): `syncSongs()` in `render()` starts or stops it whenever `songsEnabled(game)` changes, and the "Lieder" tab plus the song info in calendar and day editor (`daySongs()`) are hidden while songs are off.
 
 ### Songs
 

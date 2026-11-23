@@ -1,7 +1,8 @@
 // Reiter „Spiel“: Einstellungen für die Spielleitung (wer das Spiel erstellt hat).
-// Sperre, Spielname, Einladungslink, Spieler verwalten, zurücksetzen und löschen.
+// Sperre, Spielname, Lieder an/aus, Einladungs- und Zuschauer-Link, Spieler verwalten,
+// zurücksetzen und löschen.
 //
-//   games/{g}                 { name, owner, ownerName, locked, songsSeeded, createdAt }
+//   games/{g}                 { name, owner, ownerName, locked, songsEnabled, songsSeeded, createdAt }
 //   games/{g}/private/invite  { code, open }   nur die Spielleitung liest ihn
 
 import {
@@ -10,6 +11,7 @@ import {
 import { db } from "./firebase.js";
 import {
   CELL_COUNT, MAX_GAME_NAME_LENGTH, cleanName, canAddWords, drawnMap, ranking, randomId, escapeHtml, emptyCells,
+  songsEnabled,
 } from "./bingo.js";
 import { toast, miniGridHtml, openOverlay, closeOverlay, copyText } from "./ui.js";
 
@@ -20,12 +22,20 @@ export function inviteLink(gameId, code) {
   return url.toString();
 }
 
+/** Zuschauer-Link: öffnet das Spiel direkt als Gast, ohne Konto und ohne Beitreten. */
+export function watchLink(gameId) {
+  const url = new URL("index.html", location.href);
+  url.search = new URLSearchParams({ spiel: gameId, zuschauen: "1" }).toString();
+  return url.toString();
+}
+
 /**
  * @param opts.root       Element, in das gezeichnet wird
  * @param opts.getCtx     () => { gameId, game, boards, days, uid }
  * @param opts.onDeleted  () => void – nach dem Löschen des Spiels
+ * @param opts.onSongsOn  () => void – Lieder wurden eingeschaltet (z. B. Liederpool füllen)
  */
-export function createSettingsView({ root, getCtx, onDeleted }) {
+export function createSettingsView({ root, getCtx, onDeleted, onSongsOn = () => {} }) {
   const st = { invite: null, openGrids: new Set(), busy: false };
 
   root.innerHTML = `
@@ -49,6 +59,11 @@ export function createSettingsView({ root, getCtx, onDeleted }) {
         <input type="text" data-name maxlength="${MAX_GAME_NAME_LENGTH}" aria-label="Spielname" enterkeyhint="done">
         <button type="submit" class="btn primary">Speichern</button>
       </form>
+      <label class="perm">
+        <span>🎶 Weihnachtslieder für jeden Abend
+          <small class="muted perm-sub">Ausgeschaltet verschwindet der Reiter „Lieder“. Schon ausgesuchte Lieder bleiben gespeichert.</small></span>
+        <span class="switch"><input type="checkbox" data-songs-on aria-label="Weihnachtslieder"><span></span></span>
+      </label>
     </section>
 
     <section class="card">
@@ -64,6 +79,14 @@ export function createSettingsView({ root, getCtx, onDeleted }) {
         <span>Neue Spieler dürfen beitreten</span>
         <span class="switch"><input type="checkbox" data-invite-open><span></span></span>
       </label>
+      <h2 class="watch-link">Zuschauer-Link</h2>
+      <p class="muted">Damit kann man ohne Konto zuschauen (alle Felder, Rangliste, Kalender), aber nicht beitreten.
+        Praktisch für Verwandte, die nur mitfiebern wollen.</p>
+      <input type="text" data-watch-link readonly aria-label="Zuschauer-Link">
+      <div class="row wrap-row actions">
+        <button type="button" class="btn small" data-watch-copy>🔗 Link kopieren</button>
+        <a class="btn small" data-watch-wa target="_blank" rel="noopener">💬 WhatsApp</a>
+      </div>
     </section>
 
     <p class="intro-text">👥 Spieler</p>
@@ -156,6 +179,8 @@ export function createSettingsView({ root, getCtx, onDeleted }) {
       : "Alle können ihre Felder bearbeiten.";
     const nameInput = q("[data-name]");
     if (document.activeElement !== nameInput) nameInput.value = game.name ?? "";
+    q("[data-songs-on]").checked = songsEnabled(game);
+    renderWatch();
     renderPlayers();
   }
 
@@ -167,6 +192,14 @@ export function createSettingsView({ root, getCtx, onDeleted }) {
       ? "https://wa.me/?text=" + encodeURIComponent(
         `🎄 Macht mit beim Weihnachtsbingo „${ctx().game?.name ?? ""}“! Über diesen Link könnt ihr beitreten:\n${link}`)
       : "#";
+  }
+
+  function renderWatch() {
+    const link = watchLink(ctx().gameId);
+    q("[data-watch-link]").value = link;
+    q("[data-watch-wa]").href = "https://wa.me/?text=" + encodeURIComponent(
+      `🎄 Schaut beim Weihnachtsbingo „${ctx().game?.name ?? ""}“ zu – ganz ohne Anmeldung:
+${link}`);
   }
 
   /** Spielerliste – vorhandene Karten werden aktualisiert statt neu gebaut, damit Schalter sanft umspringen. */
@@ -248,6 +281,19 @@ export function createSettingsView({ root, getCtx, onDeleted }) {
     if (name === ctx().game?.name) return;
     save(updateDoc(gameRef(), { name }), "✏️ Spielname gespeichert.");
   });
+
+  q("[data-songs-on]").addEventListener("change", (e) => {
+    const on = e.target.checked;
+    save(updateDoc(gameRef(), { songsEnabled: on }),
+      on ? "🎶 Weihnachtslieder eingeschaltet." : "🔕 Weihnachtslieder ausgeschaltet.")
+      .then((ok) => {
+        if (!ok) render();
+        else if (on) onSongsOn();
+      });
+  });
+
+  q("[data-watch-copy]").addEventListener("click", () => copyText(watchLink(ctx().gameId)));
+  q("[data-watch-link]").addEventListener("focus", (e) => e.target.select());
 
   q("[data-invite-copy]").addEventListener("click", () => {
     if (st.invite) copyText(inviteLink(ctx().gameId, st.invite.code));

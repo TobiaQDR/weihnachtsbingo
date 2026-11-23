@@ -23,6 +23,9 @@ So funktioniert es:
 - **Mehrere Spiele gleichzeitig** sind möglich (z. B. eins für die Familie, eins für die Freunde).
   Unter „🏠 Meine Spiele“ sieht man alle Spiele, bei denen man mitmacht, und oben im Spiel kann man
   über die Auswahlliste zwischen ihnen wechseln.
+- **Zuschauen geht auch ohne Konto**, als Gast mit dem Link zum Spiel.
+- Eine **E-Mail-Adresse** braucht niemand. Wer will, kann eine hinterlegen, um ein vergessenes
+  Passwort zurücksetzen zu können.
 
 ---
 
@@ -37,6 +40,9 @@ So funktioniert es:
    - Anbieter **E-Mail/Passwort** aktivieren → Speichern.
      Die Spieler brauchen trotzdem keine E-Mail-Adresse: Die Seite macht aus dem Benutzernamen intern
      eine erfundene Adresse, an die nie etwas geschickt wird.
+   - Unter **Authentication → Templates** oben die **Vorlagensprache** auf **Deutsch** stellen. Diese
+     E-Mails bekommen nur Spieler, die freiwillig eine E-Mail-Adresse hinterlegen (Bestätigungslink und
+     „Passwort zurücksetzen“).
 5. Zahnrad oben links → **Projekteinstellungen → Allgemein → Meine Apps →** Symbol `</>` (Web-App)
    - Spitzname z. B. `bingo`, **kein** Hosting anhaken → App registrieren
    - Du siehst einen Block `const firebaseConfig = { apiKey: "...", ... }`
@@ -87,13 +93,15 @@ mit einem zweiten Testkonto beitreten.
    (mindestens 6 Zeichen). Mit dem 👁️-Knopf neben dem Passwortfeld kann man das Passwort beim Tippen
    kurz anzeigen, sonst ist es verdeckt.
 2. Unter **🏠 Meine Spiele → Neues Spiel erstellen** einen Namen eingeben (z. B. „Familie Müller“).
-   Du bist jetzt die Spielleitung und landest im Reiter **⚙️ Spiel**.
+   Mit dem Häkchen **🎶 Mit Weihnachtsliedern** legst du fest, ob es den Reiter „Lieder“ gibt (das lässt
+   sich später im Reiter **⚙️ Spiel** jederzeit ändern). Du bist jetzt die Spielleitung und landest im
+   Reiter **⚙️ Spiel**.
 3. Dort steht der **Einladungslink**. Ihn per **WhatsApp**-Knopf oder **Link kopieren** an alle
    schicken, gern auch in die Familiengruppe.
 4. Wer den Link öffnet, hat diese Möglichkeiten:
    - **Konto erstellen** bzw. **Anmelden** und dann **🎁 Mitspielen**. Jeder neue Spieler darf erst
      einmal Tageswörter eintragen.
-   - **👀 Nur zuschauen**: als Gast (ohne Konto) alle Felder, die Rangliste, den Kalender und die Lieder
+   - **👀 Als Gast zuschauen**: ohne Konto alle Felder, die Rangliste, den Kalender und die Lieder
      ansehen. Gäste bekommen kein eigenes Feld und können nichts eintragen.
 5. Auf jedem weiteren Gerät (Handy, Tablet, Laptop) meldet man sich einfach mit Benutzername und
    Passwort an. Das Gerät merkt sich die Anmeldung. Unter dem eigenen Feld kann man das **Passwort
@@ -104,6 +112,17 @@ mit einem zweiten Testkonto beitreten.
 7. Sobald alle ihre Felder ausgefüllt haben, im Reiter **⚙️ Spiel** den **Schalter „Felder sperren“**
    umlegen. Mit demselben Schalter kannst du jederzeit wieder entsperren.
 
+### Zuschauen ohne Konto
+
+- Im Reiter **⚙️ Spiel** gibt es neben dem Einladungslink einen **Zuschauer-Link**. Wer ihn öffnet,
+  landet direkt im Spiel, ganz ohne Anmeldung, kann aber nicht beitreten. Ideal für Verwandte, die
+  nur mitfiebern wollen.
+- Auch mit dem Einladungslink kann man auf **👀 Als Gast zuschauen** tippen.
+- Ohne Link: auf der Startseite **👀 Als Gast zuschauen** antippen und einen Link zum Spiel einfügen.
+- Das Gerät merkt sich das Spiel, beim nächsten Öffnen der Seite geht es direkt weiter.
+  Oben im Spiel führt **„Anmelden oder mitspielen“** zur Anmeldung.
+- Der Zuschauer-Link lässt sich nicht ändern. Wer ihn hat, kann immer zuschauen, solange es das Spiel gibt.
+
 ### Mehrere Spiele
 
 - Jeder kann beliebig viele Spiele erstellen und bei beliebig vielen mitspielen.
@@ -113,12 +132,21 @@ mit einem zweiten Testkonto beitreten.
 - **🚪 Spiel verlassen** (unter dem eigenen Feld) nimmt dich samt Feld aus einem Spiel. Zurück geht es
   nur wieder über den Einladungslink. Die Spielleitung kann ihr eigenes Spiel nicht verlassen, nur löschen.
 
-### Passwort vergessen?
+### E-Mail-Adresse (freiwillig) und Passwort vergessen
 
-Ein vergessenes Passwort lässt sich **nicht zurücksetzen** (es gibt ja keine echte E-Mail-Adresse).
-Dann ein neues Konto mit anderem Namen anlegen und über den Einladungslink neu beitreten. Die
-Spielleitung kann das alte Feld entfernen. Wer sein Passwort noch weiß, kann es unter dem eigenen Feld
-oder unter „Meine Spiele“ jederzeit ändern.
+- Unter dem eigenen Feld oder unter „Meine Spiele“ auf **📧 E-Mail** tippen, die Adresse und das
+  Passwort eingeben. Es kommt eine E-Mail mit einem **Bestätigungslink** (auch im Spam-Ordner
+  nachschauen). Erst nach dem Antippen ist die Adresse hinterlegt. Die anderen Spieler sehen sie nicht.
+- Anmelden geht danach weiter mit **Benutzername und Passwort** (oder mit der E-Mail-Adresse).
+- **Passwort vergessen?** Auf der Anmeldeseite **„Passwort vergessen?“** antippen und die hinterlegte
+  E-Mail-Adresse eingeben. Über den Link in der E-Mail ein neues Passwort festlegen und sich dann
+  **einmal mit der E-Mail-Adresse** statt dem Benutzernamen anmelden. Danach klappt auch der
+  Benutzername wieder.
+- **Ohne hinterlegte E-Mail** lässt sich ein vergessenes Passwort nicht zurücksetzen. Dann ein neues
+  Konto mit anderem Namen anlegen und über den Einladungslink neu beitreten. Die Spielleitung kann das
+  alte Feld entfernen.
+- Eine hinterlegte Adresse lässt sich ändern, aber nicht wieder ganz entfernen.
+- Wer sein Passwort noch weiß, kann es mit **🔑 Passwort ändern** jederzeit ändern.
 
 ### Spieler verwalten (Spielleitung)
 
@@ -129,7 +157,9 @@ Im Reiter **⚙️ Spiel** hat jeder Spieler eine Karte:
 - **Entfernen**: Spieler samt Feld aus dem Spiel nehmen. Er sieht das Spiel dann nicht mehr in seiner
   Liste und kann nur mit dem Einladungslink wieder beitreten.
 
-Außerdem kannst du dort den **Spielnamen ändern**.
+Außerdem kannst du dort den **Spielnamen ändern** und die **Weihnachtslieder ein- oder ausschalten**.
+Ausgeschaltet verschwindet der Reiter „Lieder“ für alle; schon ausgesuchte Lieder bleiben gespeichert
+und sind nach dem Wiedereinschalten wieder da.
 
 ## 5. In der Adventszeit
 
@@ -156,7 +186,8 @@ Außerdem kannst du dort den **Spielnamen ändern**.
 ### Weihnachtslieder
 
 Im Reiter **🎶 Lieder** wird für jeden Abend (1. bis 24. Dezember) festgelegt, was gesungen wird.
-Jedes Spiel hat seinen eigenen Liederpool und seine eigenen Abende.
+Jedes Spiel hat seinen eigenen Liederpool und seine eigenen Abende. Die Spielleitung kann die Lieder
+im Reiter **⚙️ Spiel** ausschalten, wenn sie bei einem Spiel nicht passen.
 
 - Oben die Tage antippen; heute ist vorausgewählt. Pro Abend gibt es **höchstens 3 Lieder**.
 - **Lied aussuchen**: Jeder Spieler kann ein Lied aus dem Liederpool wählen und mit **＋** hinzufügen.
@@ -204,6 +235,15 @@ Der kostenlose Firebase-Tarif „Spark“ erlaubt 50.000 Lesevorgänge und 20.00
 Eine Familie braucht davon nur einen Bruchteil. Es ist keine Kreditkarte nötig, also können keine Kosten entstehen.
 
 ## Update auf die neue Version
+
+### Update „Lieder an/aus, Zuschauer-Link, E-Mail“
+
+1. Den Inhalt von `firestore.rules` in Firebase unter **Firestore Database → Regeln** einfügen und
+   **Veröffentlichen**.
+2. In Firebase unter **Authentication → Templates** die Vorlagensprache auf **Deutsch** stellen.
+3. Alle Dateien wieder bei GitHub hochladen.
+
+Bestehende Spiele behalten ihre Lieder (eingeschaltet). Konten und Spiele bleiben unverändert.
 
 ### Update „Konten und mehrere Spiele“
 

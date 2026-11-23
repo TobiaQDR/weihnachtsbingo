@@ -4,13 +4,14 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import {
   getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut,
-  EmailAuthProvider, reauthenticateWithCredential, updatePassword,
+  EmailAuthProvider, reauthenticateWithCredential, updatePassword, sendPasswordResetEmail, verifyBeforeUpdateEmail,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { app, db, configured } from "./firebase.js";
 import {
   CELL_COUNT, MIN_PASSWORD_LENGTH, MAX_GAME_NAME_LENGTH, SEASON_YEAR, normalize, cleanWord, cleanName,
   isValidName, accountEmail, cellsOf, canAddWords, daysMap, drawnMap, scoreBoard, ranking, isDayOpen,
-  escapeHtml, emptyCells, randomId, swapCells,
+  escapeHtml, emptyCells, randomId, swapCells, nameKey, loginKey, isValidEmail, isAccountEmail, gameIdFrom,
+  songsEnabled,
 } from "./bingo.js";
 import {
   $, toast, initTabs, startSnow, confetti, openOverlay, closeOverlay, miniGridHtml, calendarHtml,
@@ -21,8 +22,10 @@ import { createSongsView, seedDefaultSongs } from "./songs.js";
 import { createSettingsView } from "./settings.js";
 
 // Datenmodell (siehe firestore.rules):
-//   users/{uid}                { name, games: [gameId] }       eigenes Konto und Liste der eigenen Spiele
-//   games/{g}                  { name, owner, ownerName, locked, songsSeeded, createdAt }
+//   users/{uid}                { name, games: [gameId], email?, loginKey? }  Konto, eigene Spiele, freiwillige E-Mail
+//   names/{nameKey}            { uid }                         Benutzername vergeben (wenn das Konto eine echte E-Mail hat)
+//   logins/{loginKey}          { email, uid }                  Benutzername + Passwort → hinterlegte E-Mail
+//   games/{g}                  { name, owner, ownerName, locked, songsEnabled, songsSeeded, createdAt }
 //   games/{g}/boards/{uid}     { name, cells[25], canAddWords } Bingo-Feld, Dokument-ID = Konto
 //   games/{g}/members/{uid}    { invite, joinedAt }            Nachweis der Einladung (privat)
 //   games/{g}/days/{1..24}, songs/{id}, songDays/{1..24}, private/invite
@@ -33,7 +36,7 @@ const startParams = new URLSearchParams(location.search);
 
 const state = {
   user: null,            // angemeldetes Konto (null = nicht angemeldet, schaut als Gast zu)
-  profile: null,         // users/{uid}: { name, games }
+  profile: null,         // users/{uid}: { name, games, email, loginKey }
   gameInfo: new Map(),   // gameId → { name, owner, ownerName } oder null (gibt es nicht mehr)
   gameId: null,          // gerade geöffnetes Spiel
   game: null,            // games/{gameId}
@@ -44,12 +47,17 @@ const state = {
   prevMask: null,
   firstRender: true,
   settingsStarted: false,
+  songsOn: false,        // Lieder-Abo des geöffneten Spiels läuft
   boardsFromCache: true, // Felder bisher nur aus dem Zwischenspeicher (noch nicht vom Server bestätigt)
   pendingTab: null,      // Reiter, der beim nächsten Öffnen eines Spiels gezeigt wird
   invite: null,          // { gameId, code } aus dem Einladungslink
 };
 /** Abos des geöffneten Spiels – beim Wechseln alle abbestellen. */
 let gameUnsubs = [];
+/** Lieder-Abo (eigenes, weil die Spielleitung die Lieder jederzeit aus- und einschalten kann). */
+let songsUnsub = null;
+/** Spiel aus dem Link (Einladungs- oder Zuschauer-Link) bzw. aus dem Gast-Formular. */
+let linkGame = startParams.get("spiel");
 /** Spiele, die schon wieder in die eigene Liste eingetragen wurden. */
 const relisted = new Set();
 let tabs;
@@ -110,6 +118,7 @@ const settingsView = createSettingsView({
     gameId: state.gameId, game: state.game, boards: state.boards, days: state.days, uid: state.user?.uid,
   }),
   onDeleted: () => { closeGame(); showHome(); },
+  onSongsOn: () => { if (state.game && !state.game.songsSeeded) seedSongs(state.gameId); },
 });
 
 if (!configured) {
@@ -130,9 +139,18 @@ async function boot() {
   if (startParams.get("einladung") && !startParams.get("spiel")) {
     toast("Dieser Einladungslink gehört zur alten Version. Bitte frag nach dem neuen Link.", 7000);
   }
-  const g = startParams.get("spiel");
-  if (g && storageGet("bingoGast") === g) return openGame(g);
+  // Gast: Zuschauer-Link, oder schon einmal als Gast zugeschaut
+  const guestGame = storageGet("bingoGast");
+  if (linkGame && (startParams.get("zuschauen") || guestGame === linkGame)) return watchAsGuest(linkGame);
+  if (!linkGame && guestGame) return watchAsGuest(guestGame);
   showAuth();
+}
+
+/** Ohne Konto zuschauen. */
+function watchAsGuest(gameId) {
+  linkGame = gameId;
+  storageSet("bingoGast", gameId);
+  openGame(gameId);
 }
 
 /**
@@ -168,7 +186,7 @@ async function signedIn(user, nameHint = "") {
 
   await loadGameInfos();
 
-  const g = startParams.get("spiel");
+  const g = linkGame;
   if (state.invite && !myGames().includes(state.invite.gameId)) return showInvite();
   if (g) return openGame(g);
   const last = storageGet("bingoSpiel");
@@ -180,6 +198,8 @@ function profileOf(data) {
   return {
     name: String(data?.name ?? ""),
     games: Array.isArray(data?.games) ? data.games.map(String) : [],
+    email: typeof data?.email === "string" ? data.email : "",
+    loginKey: typeof data?.loginKey === "string" ? data.loginKey : "",
   };
 }
 
@@ -219,7 +239,10 @@ function setAuthMode(mode) {
   for (const el of $("auth").querySelectorAll("[data-only]")) el.hidden = el.dataset.only !== mode;
   $("auth-btn").textContent = mode === "register" ? "Konto erstellen" : "Anmelden";
   $("auth-pass").autocomplete = mode === "register" ? "new-password" : "current-password";
+  $("auth-name-label").textContent = mode === "register" ? "Benutzername" : "Benutzername (oder E-Mail-Adresse)";
+  $("auth-name").maxLength = mode === "register" ? 30 : 254;
   $("auth-msg").textContent = "";
+  $("forgot-form").hidden = true;
 }
 
 async function showAuth(message = "") {
@@ -227,8 +250,8 @@ async function showAuth(message = "") {
   setAuthMode(state.invite ? "register" : authMode);
   $("auth-msg").textContent = message;
   showScreen("auth");
-  const g = startParams.get("spiel");
-  $("auth-guest").hidden = !g;
+  const g = linkGame;
+  $("guest-form").hidden = true;
   $("auth-invite").hidden = true;
   if (g) {
     try {
@@ -253,9 +276,11 @@ $("auth-mode").addEventListener("click", (e) => {
 $("auth-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const msg = $("auth-msg");
-  const name = cleanName($("auth-name").value);
+  const register = authMode === "register";
+  const name = cleanName($("auth-name").value, 254);
   const password = $("auth-pass").value;
-  if (!isValidName(name)) {
+  const byEmail = !register && name.includes("@");
+  if (!byEmail && !isValidName(name)) {
     msg.textContent = "Der Benutzername braucht 2 bis 30 Zeichen.";
     return;
   }
@@ -265,14 +290,22 @@ $("auth-form").addEventListener("submit", async (e) => {
   }
   msg.textContent = "";
   $("auth-btn").disabled = true;
-  const register = authMode === "register";
   try {
-    const email = await accountEmail(name);
-    const cred = register
-      ? await createUserWithEmailAndPassword(auth, email, password)
-      : await signInWithEmailAndPassword(auth, email, password);
+    let user;
+    if (register) {
+      // Namen, deren Konto eine echte E-Mail-Adresse hat, sind in names/ reserviert
+      if ((await getDoc(doc(db, "names", await nameKey(name)))).exists()) {
+        throw Object.assign(new Error("name taken"), { code: "auth/email-already-in-use" });
+      }
+      user = (await createUserWithEmailAndPassword(auth, await accountEmail(name), password)).user;
+    } else if (byEmail) {
+      user = (await signInWithEmailAndPassword(auth, name, password)).user;
+    } else {
+      user = await signInWithName(name, password);
+    }
     resetPasswords($("auth"));
-    await signedIn(cred.user, name);
+    await signedIn(user, byEmail ? "" : name);
+    if (!register) syncLoginKey(password);
     toast(register ? `Willkommen, ${userName()}! 🎉` : `Willkommen zurück, ${userName()}! 🎄`, 4000);
   } catch (err) {
     console.error(err);
@@ -283,6 +316,60 @@ $("auth-form").addEventListener("submit", async (e) => {
     $("auth-btn").disabled = false;
   }
 });
+
+/**
+ * Anmelden mit Benutzername. Hat das Konto eine echte E-Mail-Adresse, steht sie unter
+ * logins/{Schlüssel aus Name + Passwort}; sonst gilt die erfundene Adresse aus dem Namen.
+ */
+async function signInWithName(name, password) {
+  const stored = [];
+  try {
+    const s = await getDoc(doc(db, "logins", await loginKey(name, password)));
+    // email = zuletzt eingetragene Adresse, alt = bisher bestätigte (bis die neue bestätigt ist)
+    if (s.exists()) stored.push(String(s.data().email ?? ""), String(s.data().alt ?? ""));
+  } catch (err) {
+    console.warn("Anmeldedaten:", err);
+  }
+  const candidates = [...new Set([...stored, await accountEmail(name)].filter(Boolean))];
+  let lastErr;
+  for (const email of candidates) {
+    try {
+      return (await signInWithEmailAndPassword(auth, email, password)).user;
+    } catch (err) {
+      lastErr = err;
+      if (!WRONG_LOGIN.includes(err.code)) throw err;
+    }
+  }
+  throw lastErr;
+}
+
+const WRONG_LOGIN = ["auth/invalid-credential", "auth/invalid-login-credentials", "auth/user-not-found", "auth/wrong-password"];
+
+/**
+ * Mit hinterlegter E-Mail: Eintrag in logins/ passend zum aktuellen Passwort halten
+ * (nach dem Anmelden, nach einer Passwortänderung und nach dem Zurücksetzen per E-Mail).
+ */
+async function syncLoginKey(password, email = state.profile?.email) {
+  const current = auth.currentUser?.email ?? "";
+  const confirmed = isAccountEmail(current) ? "" : current;
+  email ||= confirmed;
+  if (!state.user || !state.profile || !email) return;
+  try {
+    const key = await loginKey(userName(), password);
+    const alt = confirmed && confirmed !== email ? confirmed : "";
+    if (key === state.profile.loginKey && email === state.profile.email && !alt) return;
+    const uid = state.user.uid;
+    const batch = writeBatch(db);
+    if (state.profile.loginKey && state.profile.loginKey !== key) batch.delete(doc(db, "logins", state.profile.loginKey));
+    batch.set(doc(db, "logins", key), alt ? { email, alt, uid } : { email, uid });
+    batch.update(doc(db, "users", uid), { email, loginKey: key });
+    await batch.commit();
+    state.profile.loginKey = key;
+    state.profile.email = email;
+  } catch (err) {
+    console.warn("Anmeldedaten nicht aktualisiert:", err);
+  }
+}
 
 function authErrorText(err) {
   switch (err?.code) {
@@ -297,6 +384,10 @@ function authErrorText(err) {
       return `Das Passwort ist zu kurz (mindestens ${MIN_PASSWORD_LENGTH} Zeichen).`;
     case "auth/too-many-requests":
       return "Zu viele Versuche. Bitte warte kurz und versuche es dann nochmal.";
+    case "auth/invalid-email":
+      return "Diese E-Mail-Adresse sieht nicht richtig aus.";
+    case "auth/requires-recent-login":
+      return "Bitte melde dich kurz ab und wieder an und versuche es dann nochmal.";
     case "auth/network-request-failed":
       return "Keine Verbindung. Bitte prüfe die Internetverbindung.";
     case "auth/operation-not-allowed":
@@ -307,10 +398,65 @@ function authErrorText(err) {
 }
 
 $("auth-guest").addEventListener("click", () => {
-  const g = startParams.get("spiel");
-  if (!g) return;
-  storageSet("bingoGast", g);
-  openGame(g);
+  if (linkGame) return watchAsGuest(linkGame);
+  // Ohne Link in der Adresse: Link einfügen lassen
+  const form = $("guest-form");
+  form.hidden = !form.hidden;
+  $("guest-msg").textContent = "";
+  if (!form.hidden) $("guest-link").focus();
+});
+
+$("guest-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const id = gameIdFrom($("guest-link").value);
+  const msg = $("guest-msg");
+  if (!id) {
+    msg.textContent = "Das ist kein Link zu einem Spiel. Kopiere den ganzen Link, den du bekommen hast.";
+    return;
+  }
+  try {
+    if (!(await getDoc(doc(db, "games", id))).exists()) {
+      msg.textContent = "Dieses Spiel gibt es nicht (mehr).";
+      return;
+    }
+  } catch (err) {
+    console.error(err);
+    msg.textContent = "Keine Verbindung. Bitte nochmal versuchen.";
+    return;
+  }
+  $("guest-link").value = "";
+  watchAsGuest(id);
+});
+
+// Passwort vergessen: Link an die hinterlegte E-Mail-Adresse
+$("forgot-open").addEventListener("click", () => {
+  const form = $("forgot-form");
+  form.hidden = !form.hidden;
+  $("forgot-msg").textContent = "";
+  if (!form.hidden) $("forgot-email").focus();
+});
+
+$("forgot-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const email = $("forgot-email").value.trim();
+  const msg = $("forgot-msg");
+  if (!isValidEmail(email)) {
+    msg.textContent = "Bitte eine gültige E-Mail-Adresse eingeben.";
+    return;
+  }
+  $("forgot-btn").disabled = true;
+  try {
+    auth.languageCode = "de";
+    await sendPasswordResetEmail(auth, email);
+    msg.textContent = "";
+    $("forgot-form").hidden = true;
+    $("auth-msg").textContent = "📧 Wenn diese Adresse bei einem Konto hinterlegt ist, kommt gleich eine E-Mail (auch im Spam-Ordner nachschauen). Danach hier mit E-Mail-Adresse und neuem Passwort anmelden.";
+  } catch (err) {
+    console.error(err);
+    msg.textContent = authErrorText(err);
+  } finally {
+    $("forgot-btn").disabled = false;
+  }
 });
 
 // ---------- Meine Spiele ----------
@@ -354,12 +500,14 @@ $("create-form").addEventListener("submit", async (e) => {
   const name = cleanName($("create-name").value, MAX_GAME_NAME_LENGTH) || `Weihnachtsbingo ${SEASON_YEAR}`;
   const uid = state.user.uid;
   const gameId = randomId(20);
+  const withSongs = $("create-songs").checked;
   $("create-btn").disabled = true;
   try {
     // Spiel, Einladung, eigenes Feld und Eintrag in der eigenen Liste in einem Rutsch
     const batch = writeBatch(db);
     batch.set(doc(db, "games", gameId), {
-      name, owner: uid, ownerName: userName(), locked: false, songsSeeded: false, createdAt: serverTimestamp(),
+      name, owner: uid, ownerName: userName(), locked: false, songsEnabled: withSongs, songsSeeded: false,
+      createdAt: serverTimestamp(),
     });
     batch.set(doc(db, "games", gameId, "private", "invite"), { code: randomId(16), open: true });
     batch.set(doc(db, "games", gameId, "boards", uid), { name: userName(), cells: emptyCells(), canAddWords: true });
@@ -374,7 +522,7 @@ $("create-form").addEventListener("submit", async (e) => {
   }
   $("create-name").value = "";
   state.gameInfo.set(gameId, { name, owner: uid, ownerName: userName() });
-  await seedSongs(gameId);
+  if (withSongs) await seedSongs(gameId);
   toast(`🎉 „${name}“ ist erstellt! Schick jetzt den Einladungslink herum.`, 5000);
   state.pendingTab = "settings";
   openGame(gameId);
@@ -479,13 +627,30 @@ function openGame(gameId) {
       state.days = daysMap(state.dayDocs);
       render();
     }, onLoadError),
-    songsView.start(gameId),
   );
+}
+
+/** Lieder-Abo passend zur Einstellung des Spiels starten oder beenden. */
+function syncSongs() {
+  const on = songsEnabled(state.game);
+  if (on && !state.songsOn) {
+    state.songsOn = true;
+    songsUnsub = songsView.start(state.gameId);
+  } else if (!on && state.songsOn) {
+    stopSongs();
+  }
+}
+
+function stopSongs() {
+  songsUnsub?.();
+  songsUnsub = null;
+  state.songsOn = false;
 }
 
 /** Abos des bisherigen Spiels beenden und alles zurücksetzen. */
 function closeGame() {
   gameUnsubs.splice(0).forEach((off) => off());
+  stopSongs();
   dayEditor.close();
   if (state.editIndex !== null) closeEditor();
   Object.assign(state, {
@@ -505,7 +670,9 @@ function gameGone() {
   if (!wasOwner) toast(`„${name}“ gibt es nicht mehr.`, 5000);
   if (!state.user) {
     storageRemove("bingoGast");
-    return showError("Dieses Spiel gibt es nicht (mehr).");
+    linkGame = null;
+    setUrl({});
+    return showAuth("Dieses Spiel gibt es nicht (mehr).");
   }
   forgetGames([id]);
   showHome();
@@ -542,6 +709,8 @@ document.addEventListener("click", (e) => {
     showHome();
   } else if (b.dataset.action === "password") {
     openPasswordDialog();
+  } else if (b.dataset.action === "email") {
+    openMailDialog();
   } else if (b.dataset.action === "logout") {
     logout();
   }
@@ -589,6 +758,7 @@ $("pw-form").addEventListener("submit", async (e) => {
   try {
     await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, oldPw));
     await updatePassword(user, newPw);
+    await syncLoginKey(newPw);
     closePasswordDialog();
     toast("🔑 Neues Passwort gespeichert.", 4000);
   } catch (err) {
@@ -598,6 +768,88 @@ $("pw-form").addEventListener("submit", async (e) => {
       : authErrorText(err);
   } finally {
     $("pw-save").disabled = false;
+  }
+});
+
+// ---------- Freiwillige E-Mail-Adresse ----------
+
+async function openMailDialog() {
+  const user = auth.currentUser;
+  if (!user) return;
+  resetPasswords($("mail-dialog"));
+  $("mail-msg").textContent = "";
+  $("mail-email").value = "";
+  renderMailStatus();
+  openOverlay($("mail-dialog"));
+  $("mail-email").focus();
+  // Wurde der Bestätigungslink inzwischen angetippt?
+  try {
+    await user.reload();
+    renderMailStatus();
+  } catch (err) {
+    console.warn(err);
+  }
+}
+
+function renderMailStatus() {
+  const user = auth.currentUser;
+  const confirmed = user && !isAccountEmail(user.email) ? user.email : "";
+  const pending = state.profile?.email && state.profile.email !== confirmed ? state.profile.email : "";
+  const status = $("mail-status");
+  if (confirmed && !pending) {
+    status.textContent = `✅ Hinterlegt: ${confirmed}`;
+  } else if (pending) {
+    status.textContent = `⏳ Bestätigungslink an ${pending} geschickt – bitte in der E-Mail antippen.${confirmed ? ` Bis dahin gilt ${confirmed}.` : ""}`;
+  } else {
+    status.textContent = "Noch keine E-Mail-Adresse hinterlegt.";
+  }
+  $("mail-save").textContent = confirmed || pending ? "Neue Adresse bestätigen" : "Bestätigungslink schicken";
+}
+
+function closeMailDialog() {
+  closeOverlay($("mail-dialog"));
+}
+
+$("mail-cancel").addEventListener("click", closeMailDialog);
+$("mail-dialog").addEventListener("click", (e) => { if (e.target === $("mail-dialog")) closeMailDialog(); });
+
+$("mail-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const email = $("mail-email").value.trim();
+  const password = $("mail-pass").value;
+  const msg = $("mail-msg");
+  const user = auth.currentUser;
+  if (!user || !state.profile) return;
+  if (!isValidEmail(email)) {
+    msg.textContent = "Bitte eine gültige E-Mail-Adresse eingeben.";
+    return;
+  }
+  if (!password) {
+    msg.textContent = "Bitte dein Passwort eingeben.";
+    return;
+  }
+  $("mail-save").disabled = true;
+  msg.textContent = "";
+  try {
+    await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, password));
+    auth.languageCode = "de";
+    await verifyBeforeUpdateEmail(user, email);
+    // Benutzernamen reservieren: Die erfundene Adresse wird nach dem Bestätigen frei
+    const nameRef = doc(db, "names", await nameKey(userName()));
+    if (!(await getDoc(nameRef)).exists()) await setDoc(nameRef, { uid: user.uid });
+    await syncLoginKey(password, email);
+    renderMailStatus();
+    closeMailDialog();
+    toast(`📧 Bestätigungslink an ${email} geschickt. Bitte in der E-Mail antippen.`, 7000);
+  } catch (err) {
+    console.error(err);
+    msg.textContent = WRONG_LOGIN.includes(err.code)
+      ? "Das Passwort stimmt nicht."
+      : err.code === "auth/email-already-in-use"
+        ? "Diese E-Mail-Adresse gehört schon zu einem anderen Konto."
+        : authErrorText(err);
+  } finally {
+    $("mail-save").disabled = false;
   }
 });
 
@@ -649,18 +901,22 @@ function render() {
     relisted.add(state.gameId);
     updateDoc(doc(db, "users", state.user.uid), { games: arrayUnion(state.gameId) }).catch(console.error);
   }
+  syncSongs();
   if (isOwner() && !state.settingsStarted) {
     state.settingsStarted = true;
     gameUnsubs.push(settingsView.start(state.gameId));
-    if (!state.game.songsSeeded) seedSongs(state.gameId);
+    if (songsEnabled(state.game) && !state.game.songsSeeded) seedSongs(state.gameId);
   }
 
   // Sichtbare Reiter: Gäste haben kein Feld, nur die Spielleitung hat „Spiel“
   const mineTab = $("tabs").querySelector('[data-tab="mine"]');
   const settingsTab = $("tabs").querySelector('[data-tab="settings"]');
-  const tabsChanged = mineTab.hidden !== !board || settingsTab.hidden !== !isOwner();
+  const songsTab = $("tabs").querySelector('[data-tab="songs"]');
+  const songsVisible = songsEnabled(state.game);
+  const tabsChanged = mineTab.hidden !== !board || settingsTab.hidden !== !isOwner() || songsTab.hidden !== !songsVisible;
   mineTab.hidden = !board;
   settingsTab.hidden = !isOwner();
+  songsTab.hidden = !songsVisible;
 
   showScreen("game");
   if (!tabs) tabs = initTabs($("tabs"), "bingoTab");
@@ -679,7 +935,7 @@ function render() {
   renderAll();
   renderCalendar();
   dayEditor.refresh();
-  songsView.refresh();
+  if (state.songsOn) songsView.refresh();
   if (isOwner()) settingsView.refresh();
 
   if (locked() && state.editIndex !== null) closeEditor();
@@ -709,6 +965,7 @@ $("guest-action").addEventListener("click", () => {
   if (!state.user) {
     storageRemove("bingoGast");
     closeGame();
+    setAuthMode("login");
     showAuth();
   } else if (state.invite?.gameId === state.gameId) {
     closeGame();
@@ -848,7 +1105,7 @@ function renderCalendar() {
   if (!state.boards || !state.dayDocs) return;
   const board = me();
   $("calendar").innerHTML = calendarHtml(state.days, state.boards, {
-    myCells: board ? cellsOf(board) : [], admin: isOwner(), songs: songsView.getDay,
+    myCells: board ? cellsOf(board) : [], admin: isOwner(), songs: daySongs,
   });
   $("calendar-note").textContent = isOwner()
     ? "Tippe auf einen Tag, um Wörter einzutragen oder zu ändern. Als Spielleitung kannst du auch Türchen bearbeiten, die noch zu sind."
@@ -859,11 +1116,14 @@ function renderCalendar() {
 
 // ---------- Kalender ----------
 
+/** Lieder eines Abends für Kalender und Tagesfenster (null, wenn die Lieder aus sind). */
+const daySongs = (n) => (state.songsOn && songsEnabled(state.game) ? songsView.getDay(n) : null);
+
 const dayEditor = createDayEditor({
   getBoards: () => state.boards ?? [],
   getDays: () => state.days,
   getMeta: (n) => state.dayDocs?.find((d) => d.id === String(n)) ?? null,
-  getSongs: (n) => songsView.getDay(n),
+  getSongs: (n) => daySongs(n),
   onOpenSongs: (n) => { songsView.showDay(n); tabs?.show("songs"); },
   onSave: async (n, words) => {
     const ref = doc(db, "games", state.gameId, "days", String(n));
@@ -984,6 +1244,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
   if (state.editIndex !== null) closeEditor();
   else if (!$("pw-dialog").hidden) closePasswordDialog();
+  else if (!$("mail-dialog").hidden) closeMailDialog();
 });
 
 // Türchen öffnen sich um Mitternacht

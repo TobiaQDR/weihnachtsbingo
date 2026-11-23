@@ -191,10 +191,62 @@ export function isValidName(name) {
  * deshalb gibt es jeden Benutzernamen nur einmal.
  */
 export async function accountEmail(name) {
+  return `u-${(await nameKey(name)).slice(0, 40)}@weihnachtsbingo.example.com`;
+}
+
+/** Kürzel eines Benutzernamens (SHA-256, Groß/Klein egal) – Dokument-ID in names/. */
+export async function nameKey(name) {
   const data = new TextEncoder().encode(`weihnachtsbingo-konto:${normalize(name)}`);
-  const hash = await crypto.subtle.digest("SHA-256", data);
-  const hex = Array.from(new Uint8Array(hash), (b) => b.toString(16).padStart(2, "0")).join("");
-  return `u-${hex.slice(0, 40)}@weihnachtsbingo.example.com`;
+  return toHex(await crypto.subtle.digest("SHA-256", data));
+}
+
+/**
+ * Schlüssel aus Benutzername + Passwort (PBKDF2) – Dokument-ID in logins/. Dort steht die
+ * freiwillig hinterlegte E-Mail-Adresse. Finden kann sie nur, wer Name und Passwort kennt.
+ */
+export async function loginKey(name, password) {
+  const enc = new TextEncoder();
+  const base = await crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", hash: "SHA-256", salt: enc.encode(`weihnachtsbingo-login:${normalize(name)}`), iterations: 150000 },
+    base, 256);
+  return toHex(bits);
+}
+
+function toHex(buffer) {
+  return Array.from(new Uint8Array(buffer), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+export const MAX_EMAIL_LENGTH = 254;
+
+/** Grobe Prüfung einer E-Mail-Adresse (genau prüft Firebase). */
+export function isValidEmail(email) {
+  const e = String(email ?? "").trim();
+  return e.length <= MAX_EMAIL_LENGTH && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
+}
+
+/** Erfundene Adresse aus accountEmail()? */
+export function isAccountEmail(email) {
+  return /@weihnachtsbingo\.example\.com$/i.test(String(email ?? ""));
+}
+
+/** Spiel-ID aus einem eingefügten Link (…?spiel=…) oder direkt eingegeben. */
+export function gameIdFrom(text) {
+  const t = String(text ?? "").trim();
+  let id = t;
+  try {
+    id = new URL(t).searchParams.get("spiel") ?? "";
+  } catch {
+    const m = t.match(/[?&]spiel=([a-z0-9]+)/i);
+    if (m) id = m[1];
+  }
+  id = id.toLowerCase();
+  return /^[a-z0-9]{16,32}$/.test(id) ? id : null;
+}
+
+/** Lieder bei einem Spiel eingeschaltet? (Ältere Spiele ohne Angabe: ja) */
+export function songsEnabled(game) {
+  return game?.songsEnabled !== false;
 }
 
 /** Zwei Felder tauschen (Drag & Drop im eigenen Feld). */
