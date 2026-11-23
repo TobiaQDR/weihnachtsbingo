@@ -24,8 +24,8 @@ So funktioniert es:
   Unter „🏠 Meine Spiele“ sieht man alle Spiele, bei denen man mitmacht, und oben im Spiel kann man
   über die Auswahlliste zwischen ihnen wechseln.
 - **Zuschauen geht auch ohne Konto**, als Gast mit dem Link zum Spiel.
-- Eine **E-Mail-Adresse** braucht niemand. Wer will, kann eine hinterlegen, um ein vergessenes
-  Passwort zurücksetzen zu können.
+- Eine **E-Mail-Adresse** braucht niemand. Wer sein Passwort vergisst, bekommt von der Spielleitung
+  einen Link, mit dem er ein neues festlegt.
 
 ---
 
@@ -40,9 +40,6 @@ So funktioniert es:
    - Anbieter **E-Mail/Passwort** aktivieren → Speichern.
      Die Spieler brauchen trotzdem keine E-Mail-Adresse: Die Seite macht aus dem Benutzernamen intern
      eine erfundene Adresse, an die nie etwas geschickt wird.
-   - Unter **Authentication → Templates** oben die **Vorlagensprache** auf **Deutsch** stellen. Diese
-     E-Mails bekommen nur Spieler, die freiwillig eine E-Mail-Adresse hinterlegen (Bestätigungslink und
-     „Passwort zurücksetzen“).
 5. Zahnrad oben links → **Projekteinstellungen → Allgemein → Meine Apps →** Symbol `</>` (Web-App)
    - Spitzname z. B. `bingo`, **kein** Hosting anhaken → App registrieren
    - Du siehst einen Block `const firebaseConfig = { apiKey: "...", ... }`
@@ -132,21 +129,28 @@ mit einem zweiten Testkonto beitreten.
 - **🚪 Spiel verlassen** (unter dem eigenen Feld) nimmt dich samt Feld aus einem Spiel. Zurück geht es
   nur wieder über den Einladungslink. Die Spielleitung kann ihr eigenes Spiel nicht verlassen, nur löschen.
 
-### E-Mail-Adresse (freiwillig) und Passwort vergessen
+### Passwort ändern oder vergessen
 
-- Unter dem eigenen Feld oder unter „Meine Spiele“ auf **📧 E-Mail** tippen, die Adresse und das
-  Passwort eingeben. Es kommt eine E-Mail mit einem **Bestätigungslink** (auch im Spam-Ordner
-  nachschauen). Erst nach dem Antippen ist die Adresse hinterlegt. Die anderen Spieler sehen sie nicht.
-- Anmelden geht danach weiter mit **Benutzername und Passwort** (oder mit der E-Mail-Adresse).
-- **Passwort vergessen?** Auf der Anmeldeseite **„Passwort vergessen?“** antippen und die hinterlegte
-  E-Mail-Adresse eingeben. Über den Link in der E-Mail ein neues Passwort festlegen und sich dann
-  **einmal mit der E-Mail-Adresse** statt dem Benutzernamen anmelden. Danach klappt auch der
-  Benutzername wieder.
-- **Ohne hinterlegte E-Mail** lässt sich ein vergessenes Passwort nicht zurücksetzen. Dann ein neues
-  Konto mit anderem Namen anlegen und über den Einladungslink neu beitreten. Die Spielleitung kann das
-  alte Feld entfernen.
-- Eine hinterlegte Adresse lässt sich ändern, aber nicht wieder ganz entfernen.
-- Wer sein Passwort noch weiß, kann es mit **🔑 Passwort ändern** jederzeit ändern.
+- Wer sein Passwort noch weiß, kann es unter dem eigenen Feld oder unter „Meine Spiele“ mit
+  **🔑 Passwort ändern** jederzeit ändern.
+- **Passwort vergessen?** Der Spielleitung Bescheid sagen. Sie tippt im Reiter **⚙️ Spiel** auf der
+  Karte des Spielers auf **🔑 Passwort-Link** und schickt den Link (per WhatsApp-Knopf oder kopiert).
+  Wer den Link öffnet, legt ein neues Passwort fest und ist gleich angemeldet. Danach meldet man sich
+  wie gewohnt mit Benutzername und neuem Passwort an.
+- Der Link funktioniert **nur einmal**. Erzeugt die Spielleitung einen neuen, wird der alte ungültig.
+  Den Link nur an die betroffene Person schicken, nicht in die Gruppe: Wer ihn hat, kommt in das Konto.
+- Wer selbst ein Spiel leitet, kann sich das Passwort von der Spielleitung eines **anderen** Spiels
+  zurücksetzen lassen, bei dem er mitspielt. Gibt es keins, lässt sich das Passwort nicht zurücksetzen.
+  **Als Spielleitung das eigene Passwort also besonders gut merken.**
+- **Konten von vor diesem Update:** Beim ersten Öffnen nach dem Update fragt die Seite einmal nach dem
+  Passwort (oder man meldet sich einfach neu an). Erst danach kann die Spielleitung einen Passwort-Link
+  erzeugen. Weiß jemand sein Passwort schon nicht mehr und ist auch nirgends mehr angemeldet, hilft nur
+  ein neues Konto mit anderem Namen und erneutes Beitreten über den Einladungslink.
+
+> **Gut zu wissen:** Damit das ohne eigenen Server klappt, kann die Spielleitung eines Spiels technisch
+> auf die Konten ihrer Mitspieler zugreifen (genau das macht der Passwort-Link möglich). Das eingetippte
+> Passwort selbst sieht sie nie. Tritt also nur Spielen von Leuten bei, denen du vertraust; in der Familie
+> ist das kein Thema.
 
 ### Spieler verwalten (Spielleitung)
 
@@ -154,6 +158,8 @@ Im Reiter **⚙️ Spiel** hat jeder Spieler eine Karte:
 
 - **„Darf Tageswörter eintragen“**: Recht wegnehmen oder wieder geben.
 - **Feld ansehen**: das Feld des Spielers aufklappen.
+- **🔑 Passwort-Link**: Link erzeugen, mit dem der Spieler ein neues Passwort festlegt (siehe
+  „Passwort ändern oder vergessen“).
 - **Entfernen**: Spieler samt Feld aus dem Spiel nehmen. Er sieht das Spiel dann nicht mehr in seiner
   Liste und kann nur mit dem Einladungslink wieder beitreten.
 
@@ -236,12 +242,25 @@ Eine Familie braucht davon nur einen Bruchteil. Es ist keine Kreditkarte nötig,
 
 ## Update auf die neue Version
 
-### Update „Lieder an/aus, Zuschauer-Link, E-Mail“
+### Update „Passwort-Link statt E-Mail“
+
+Die freiwillige E-Mail-Adresse gibt es nicht mehr. Ein vergessenes Passwort setzt jetzt die
+Spielleitung per Link zurück (siehe „Passwort ändern oder vergessen“).
+
+1. **Zuerst** den Inhalt von `firestore.rules` in Firebase unter **Firestore Database → Regeln**
+   einfügen und **Veröffentlichen**. (Mit den alten Regeln klappt das Erstellen neuer Konten nicht.)
+2. Dann alle Dateien wieder bei GitHub hochladen.
+3. Bisherige Konten funktionieren weiter. Beim nächsten Öffnen fragt die Seite jeden einmal nach dem
+   Passwort; erst danach kann die Spielleitung für ihn einen Passwort-Link erzeugen.
+4. Wer schon eine E-Mail-Adresse hinterlegt hatte, meldet sich weiter mit dem **Benutzernamen** an.
+5. Optional: Unter **Authentication → Templates → SMTP-Einstellungen** kannst du das eigene Postfach
+   wieder austragen, falls du es eingerichtet hattest. Es werden keine Mails mehr verschickt.
+
+### Update „Lieder an/aus, Zuschauer-Link“
 
 1. Den Inhalt von `firestore.rules` in Firebase unter **Firestore Database → Regeln** einfügen und
    **Veröffentlichen**.
-2. In Firebase unter **Authentication → Templates** die Vorlagensprache auf **Deutsch** stellen.
-3. Alle Dateien wieder bei GitHub hochladen.
+2. Alle Dateien wieder bei GitHub hochladen.
 
 Bestehende Spiele behalten ihre Lieder (eingeschaltet). Konten und Spiele bleiben unverändert.
 

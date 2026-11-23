@@ -708,7 +708,7 @@ input:focus { outline: none; border-color: var(--gold-deep); box-shadow: 0 0 0 4
 
 /* Anmelden, Einladung, Gast */
 .choices { display: grid; gap: 10px; margin-top: 16px; }
-#auth-form .btn.block { margin-top: 8px; }
+#auth-form .btn.block, #reset-form .btn.block { margin-top: 8px; }
 .auth-invite { margin: 0 0 14px; }
 .auth-guest { margin-top: 6px; }
 #auth .link-btn { color: var(--red-dark); font-size: 0.92rem; margin-top: 8px; }

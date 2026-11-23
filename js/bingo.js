@@ -201,8 +201,8 @@ export async function nameKey(name) {
 }
 
 /**
- * Schlüssel aus Benutzername + Passwort (PBKDF2) – Dokument-ID in logins/. Dort steht die
- * freiwillig hinterlegte E-Mail-Adresse. Finden kann sie nur, wer Name und Passwort kennt.
+ * Schlüssel aus Benutzername + Passwort (PBKDF2) – Dokument-ID in logins/. Dort steht das
+ * eigentliche Firebase-Passwort (ein Zufallsgeheimnis). Finden kann es nur, wer Name und Passwort kennt.
  */
 export async function loginKey(name, password) {
   const enc = new TextEncoder();
@@ -217,17 +217,9 @@ function toHex(buffer) {
   return Array.from(new Uint8Array(buffer), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export const MAX_EMAIL_LENGTH = 254;
-
-/** Grobe Prüfung einer E-Mail-Adresse (genau prüft Firebase). */
-export function isValidEmail(email) {
-  const e = String(email ?? "").trim();
-  return e.length <= MAX_EMAIL_LENGTH && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
-}
-
-/** Erfundene Adresse aus accountEmail()? */
-export function isAccountEmail(email) {
-  return /@weihnachtsbingo\.example\.com$/i.test(String(email ?? ""));
+/** Zufälliges Geheimnis, das als eigentliches Firebase-Passwort dient (kennt der Spieler nicht). */
+export function newSecret() {
+  return randomId(32);
 }
 
 /** Spiel-ID aus einem eingefügten Link (…?spiel=…) oder direkt eingegeben. */

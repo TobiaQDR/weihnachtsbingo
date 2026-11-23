@@ -36,29 +36,25 @@
       </div>
       <form id="auth-form" autocomplete="on">
         <label for="auth-name" id="auth-name-label">Benutzername</label>
-        <input id="auth-name" type="text" maxlength="254" autocomplete="username" autocapitalize="words" required>
+        <input id="auth-name" type="text" maxlength="30" autocomplete="username" autocapitalize="words" required>
         <p class="hint" data-only="register">Unter diesem Namen sehen dich die anderen, z. B. „Oma Erika“. Beim Anmelden ist Groß- und Kleinschreibung egal.</p>
         <label for="auth-pass">Passwort</label>
         <div class="pw-field">
           <input id="auth-pass" type="password" autocomplete="current-password" required enterkeyhint="go">
           <button type="button" class="pw-toggle" aria-label="Passwort anzeigen" aria-pressed="false">👁️</button>
         </div>
-        <p class="hint" data-only="register">Mindestens 6 Zeichen. <strong>Gut merken!</strong> Zurücksetzen lässt es sich nur, wenn du später (freiwillig) eine E-Mail-Adresse hinterlegst.</p>
+        <p class="hint" data-only="register">Mindestens 6 Zeichen. <strong>Gut merken!</strong> Falls du es doch vergisst, kann dir die Spielleitung einen Link zum Zurücksetzen schicken.</p>
         <p id="auth-msg" class="msg"></p>
         <button type="submit" id="auth-btn" class="btn primary block">Anmelden</button>
       </form>
       <p class="center" data-only="login">
         <button type="button" id="forgot-open" class="link-btn">Passwort vergessen?</button>
       </p>
-      <form id="forgot-form" class="sub-box" autocomplete="on" hidden>
-        <p class="muted">Hast du eine E-Mail-Adresse hinterlegt? Dann schicken wir dir einen Link, mit dem du ein neues Passwort festlegst.
-          Danach meldest du dich <strong>einmal mit der E-Mail-Adresse</strong> statt dem Benutzernamen an.</p>
-        <label for="forgot-email">E-Mail-Adresse</label>
-        <input id="forgot-email" type="email" maxlength="254" autocomplete="email" enterkeyhint="send">
-        <p id="forgot-msg" class="msg"></p>
-        <button type="submit" id="forgot-btn" class="btn block">📧 Link schicken</button>
-        <p class="hint">Keine E-Mail hinterlegt? Dann lässt sich das Passwort leider nicht zurücksetzen. Leg ein neues Konto an und tritt über den Einladungslink wieder bei.</p>
-      </form>
+      <div id="forgot-box" class="sub-box" hidden>
+        <p class="muted">Kein Problem: Sag der <strong>Spielleitung</strong> deines Spiels Bescheid. Sie kann dir im Reiter
+          „⚙️ Spiel“ bei deinem Namen einen <strong>Link zum Zurücksetzen</strong> erzeugen und schicken.
+          Über den Link legst du ein neues Passwort fest.</p>
+      </div>
       <div class="auth-guest">
         <p class="divider"><span>oder ohne Konto</span></p>
         <button type="button" id="auth-guest" class="btn block">👀 Als Gast zuschauen</button>
@@ -91,7 +87,6 @@
       </section>
       <p class="center account-row">
         <button type="button" class="btn ghost light" data-action="password">🔑 Passwort ändern</button>
-        <button type="button" class="btn ghost light" data-action="email">📧 E-Mail</button>
         <button type="button" class="btn ghost light" data-action="logout">Abmelden</button>
       </p>
     </div>
@@ -107,6 +102,23 @@
         <button type="button" id="invite-watch" class="btn block">👀 Nur zuschauen</button>
         <button type="button" class="btn ghost block" data-action="home">Zu meinen Spielen</button>
       </div>
+    </div>
+
+    <!-- Neues Passwort über den Link der Spielleitung (?spiel=…&passwort=…) -->
+    <div id="reset" class="card pop-in" hidden>
+      <h2>🔑 Neues Passwort</h2>
+      <p id="reset-for" class="muted"></p>
+      <form id="reset-form" autocomplete="on">
+        <input id="reset-name" type="text" autocomplete="username" hidden>
+        <label for="reset-pass">Neues Passwort (mindestens 6 Zeichen)</label>
+        <div class="pw-field">
+          <input id="reset-pass" type="password" autocomplete="new-password" required enterkeyhint="done">
+          <button type="button" class="pw-toggle" aria-label="Passwort anzeigen" aria-pressed="false">👁️</button>
+        </div>
+        <p class="hint">Danach meldest du dich wie gewohnt mit deinem Benutzernamen und dem neuen Passwort an.</p>
+        <p id="reset-msg" class="msg"></p>
+        <button type="submit" id="reset-btn" class="btn primary block">Passwort speichern</button>
+      </form>
     </div>
 
     <div id="game" hidden>
@@ -139,7 +151,6 @@
         </div>
         <p class="center account-row">
           <button type="button" class="btn ghost light" data-action="password">🔑 Passwort ändern</button>
-          <button type="button" class="btn ghost light" data-action="email">📧 E-Mail</button>
           <button type="button" id="leave" class="btn ghost light">🚪 Spiel verlassen</button>
           <button type="button" class="btn ghost light" data-action="logout">Abmelden</button>
         </p>
@@ -188,43 +199,24 @@
   <div id="pw-dialog" class="overlay" hidden>
     <form id="pw-form" class="dialog" autocomplete="off" role="dialog" aria-modal="true" aria-labelledby="pw-title">
       <h2 id="pw-title">Passwort ändern</h2>
-      <label for="pw-old">Bisheriges Passwort</label>
+      <p id="pw-intro" class="muted" hidden>Einmalig nach dem Update: Bitte gib dein Passwort noch einmal ein.
+        Danach kann dir die Spielleitung ein vergessenes Passwort zurücksetzen.</p>
+      <label for="pw-old" id="pw-old-label">Bisheriges Passwort</label>
       <div class="pw-field">
         <input id="pw-old" type="password" autocomplete="current-password">
         <button type="button" class="pw-toggle" aria-label="Passwort anzeigen" aria-pressed="false">👁️</button>
       </div>
-      <label for="pw-new">Neues Passwort (mindestens 6 Zeichen)</label>
-      <div class="pw-field">
-        <input id="pw-new" type="password" autocomplete="new-password" enterkeyhint="done">
-        <button type="button" class="pw-toggle" aria-label="Passwort anzeigen" aria-pressed="false">👁️</button>
+      <div id="pw-new-box">
+        <label for="pw-new">Neues Passwort (mindestens 6 Zeichen)</label>
+        <div class="pw-field">
+          <input id="pw-new" type="password" autocomplete="new-password" enterkeyhint="done">
+          <button type="button" class="pw-toggle" aria-label="Passwort anzeigen" aria-pressed="false">👁️</button>
+        </div>
       </div>
       <p id="pw-msg" class="msg"></p>
       <div class="buttons">
         <button type="button" id="pw-cancel" class="btn ghost">Abbrechen</button>
         <button type="submit" id="pw-save" class="btn primary">Speichern</button>
-      </div>
-    </form>
-  </div>
-
-  <!-- Freiwillige E-Mail-Adresse zum Zurücksetzen des Passworts -->
-  <div id="mail-dialog" class="overlay" hidden>
-    <form id="mail-form" class="dialog" autocomplete="off" role="dialog" aria-modal="true" aria-labelledby="mail-title">
-      <h2 id="mail-title">📧 E-Mail-Adresse</h2>
-      <p class="muted">Ganz freiwillig: Mit einer E-Mail-Adresse kannst du dein Passwort zurücksetzen, falls du es vergisst.
-        Die Adresse sehen die anderen Spieler nicht. Anmelden kannst du dich weiter mit deinem Benutzernamen.</p>
-      <p id="mail-status" class="dd-note"></p>
-      <label for="mail-email">E-Mail-Adresse</label>
-      <input id="mail-email" type="email" maxlength="254" autocomplete="email">
-      <label for="mail-pass">Dein Passwort (zur Bestätigung)</label>
-      <div class="pw-field">
-        <input id="mail-pass" type="password" autocomplete="current-password" enterkeyhint="done">
-        <button type="button" class="pw-toggle" aria-label="Passwort anzeigen" aria-pressed="false">👁️</button>
-      </div>
-      <p class="hint">Du bekommst eine E-Mail mit einem Bestätigungslink (schau auch im Spam-Ordner nach). Erst nach dem Antippen ist die Adresse hinterlegt.</p>
-      <p id="mail-msg" class="msg"></p>
-      <div class="buttons">
-        <button type="button" id="mail-cancel" class="btn ghost">Abbrechen</button>
-        <button type="submit" id="mail-save" class="btn primary">Bestätigungslink schicken</button>
       </div>
     </form>
   </div>

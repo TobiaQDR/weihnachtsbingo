@@ -6,14 +6,20 @@ rules_version = '2';
 // Jeder Spieler hat ein Konto (Benutzername + Passwort). Jeder kann Spiele erstellen;
 // wer ein Spiel erstellt, ist dort die Spielleitung (owner).
 //
+// Das eigentliche Firebase-Passwort ist ein Zufallsgeheimnis (secret). Das eingetippte Passwort schaltet
+// es nur frei (logins/). Eine Kopie liegt für die Spielleitung in games/{g}/recovery/, damit sie
+// einen Link zum Zurücksetzen (games/{g}/resets/) erzeugen kann.
+//
 // Aufbau:
-//   users/{uid}                  { name, games, email?, loginKey? }     eigenes Konto, Liste der eigenen Spiele
-//   names/{nameKey}              { uid }                                Benutzername vergeben (bei hinterlegter E-Mail)
-//   logins/{loginKey}            { email, uid }                         freiwillige E-Mail fürs Anmelden mit Benutzername;
+//   users/{uid}                  { name, games, secret, loginKey }      eigenes Konto, Liste der eigenen Spiele
+//   names/{nameKey}              { uid }                                Benutzername vergeben (alte Konten mit E-Mail)
+//   logins/{loginKey}            { uid, email, secret }                 Firebase-Anmeldedaten zum Benutzernamen;
 //                                                                         ID = Schlüssel aus Name + Passwort
 //   games/{g}                    { name, owner, ownerName, locked, songsEnabled, songsSeeded, createdAt }
 //   games/{g}/private/invite     { code, open }                         geheimer Einladungscode (nur Spielleitung)
 //   games/{g}/members/{uid}      { invite, joinedAt }                   Nachweis, dass man eingeladen wurde
+//   games/{g}/recovery/{uid}     { email, secret }                      Anmeldedaten für die Spielleitung
+//   games/{g}/resets/{token}     { uid, name, email, secret, createdAt } Link zum Zurücksetzen des Passworts
 //   games/{g}/boards/{uid}       { name, cells, canAddWords }           öffentliches Bingo-Feld, ID = Konto
 //   games/{g}/days/{1..24}       { words, updatedBy, updatedAt }        Wörter des Adventskalenders
 //   games/{g}/songs/{songId}     { title, addedBy, addedByUid }         Liederpool (ID = Titel als Kürzel)
@@ -88,46 +94,51 @@ service cloud.firestore {
 
     // ---------- Konten ----------
 
+    function validSecret(x) {
+      return x is string && x.size() >= 20 && x.size() <= 100;
+    }
+
+    function validKey(x) {
+      return x is string && x.matches('^[a-f0-9]{64}$');
+    }
+
     match /users/{userId} {
       allow read, delete: if signedIn() && request.auth.uid == userId;
       allow create: if signedIn() && request.auth.uid == userId
-        && request.resource.data.keys().hasOnly(['name', 'games'])
+        && request.resource.data.keys().hasOnly(['name', 'games', 'secret', 'loginKey'])
         && request.resource.data.name is string
         && request.resource.data.name.size() >= 2
         && request.resource.data.name.size() <= 30
         && request.resource.data.games is list
-        && request.resource.data.games.size() == 0;
-      // Der Name bleibt fest, nur die Liste der Spiele ändert sich
-      // Der Name bleibt fest; ändern dürfen sich die Liste der Spiele und die freiwillige E-Mail
+        && request.resource.data.games.size() == 0
+        && validSecret(request.resource.data.secret)
+        && validKey(request.resource.data.loginKey);
+      // Der Name bleibt fest; ändern dürfen sich die Liste der Spiele und die Anmeldedaten
       allow update: if signedIn() && request.auth.uid == userId
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['games', 'email', 'loginKey'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['games', 'secret', 'loginKey'])
         && request.resource.data.games is list
         && request.resource.data.games.size() <= 50
-        && (!('email' in request.resource.data) || (request.resource.data.email is string
-              && request.resource.data.email.size() <= 254))
-        && (!('loginKey' in request.resource.data) || request.resource.data.loginKey is string);
+        // alte Konten haben noch kein Geheimnis
+        && (!('secret' in request.resource.data) || validSecret(request.resource.data.secret))
+        && (!('loginKey' in request.resource.data) || validKey(request.resource.data.loginKey));
     }
 
-    // Vergebene Benutzernamen (nur nötig, wenn das Konto eine echte E-Mail-Adresse bekommt)
+    // Vergebene Benutzernamen alter Konten, die früher eine echte E-Mail-Adresse hinterlegt hatten
     match /names/{key} {
       allow get: if true;
-      allow list, update: if false;
-      allow create: if signedIn() && key.matches('^[a-f0-9]{64}$')
-        && request.resource.data.keys().hasOnly(['uid'])
-        && request.resource.data.uid == request.auth.uid;
+      allow list, create, update: if false;
       allow delete: if signedIn() && resource.data.uid == request.auth.uid;
     }
 
-    // Anmelden mit Benutzername, wenn das Konto eine echte E-Mail-Adresse hat.
-    // Die ID entsteht aus Benutzername + Passwort, finden kann den Eintrag also nur, wer beides kennt.
-    // email = zuletzt eingetragene Adresse, alt = bisher bestätigte (solange die neue noch nicht bestätigt ist)
+    // Anmelden mit Benutzername: Die ID entsteht aus Benutzername + Passwort, finden kann den Eintrag
+    // also nur, wer beides kennt. Darin steht das eigentliche Firebase-Passwort (secret).
     function validLogin(key) {
       let d = request.resource.data;
-      return signedIn() && key.matches('^[a-f0-9]{64}$')
-        && d.keys().hasOnly(['email', 'alt', 'uid'])
+      return signedIn() && validKey(key)
+        && d.keys().hasOnly(['uid', 'email', 'secret'])
         && d.uid == request.auth.uid
         && d.email is string && d.email.size() <= 254
-        && d.get('alt', '') is string && d.get('alt', '').size() <= 254;
+        && validSecret(d.secret);
     }
 
     match /logins/{key} {
@@ -135,7 +146,7 @@ service cloud.firestore {
       allow list: if false;
       allow create: if validLogin(key);
       allow update: if validLogin(key) && resource.data.uid == request.auth.uid;
-      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+      allow delete: if signedIn() && (resource == null || resource.data.uid == request.auth.uid);
     }
 
     // ---------- Spiele ----------
@@ -181,6 +192,38 @@ service cloud.firestore {
           && request.resource.data.joinedAt == request.time
           && validInvite(g, request.resource.data.invite)
           && existsAfter(boardPath(g, uid));
+      }
+
+      // Anmeldedaten eines Spielers für die Spielleitung (zum Zurücksetzen des Passworts).
+      // Schreibt nur der Spieler selbst, und nur solange er ein Feld in diesem Spiel hat.
+      match /recovery/{uid} {
+        allow read, delete: if signedIn() && (request.auth.uid == uid || isOwner(g));
+        allow create, update: if signedIn() && request.auth.uid == uid
+          && existsAfter(boardPath(g, uid))
+          && request.resource.data.keys().hasOnly(['email', 'secret'])
+          && request.resource.data.email is string
+          && request.resource.data.email.size() <= 254
+          && validSecret(request.resource.data.secret);
+      }
+
+      // Link zum Zurücksetzen: legt die Spielleitung an; abrufen kann ihn, wer den (zufälligen) Token kennt.
+      // Löschen: Spielleitung oder der Spieler selbst (nach dem Benutzen).
+      match /resets/{token} {
+        allow get: if true;
+        allow list: if isOwner(g);
+        allow update: if false;
+        allow create: if isOwner(g)
+          && token.matches('^[a-z0-9]{20,40}$')
+          && request.resource.data.keys().hasOnly(['uid', 'name', 'email', 'secret', 'createdAt'])
+          && request.resource.data.uid is string
+          && exists(boardPath(g, request.resource.data.uid))
+          && request.resource.data.name is string
+          && request.resource.data.name.size() <= 30
+          && request.resource.data.email is string
+          && request.resource.data.email.size() <= 254
+          && validSecret(request.resource.data.secret)
+          && request.resource.data.createdAt == request.time;
+        allow delete: if signedIn() && (isOwner(g) || resource.data.uid == request.auth.uid);
       }
 
       // Bingo-Felder: alle sehen alle. Jeder ändert nur die 25 Wörter seines eigenen Feldes,
