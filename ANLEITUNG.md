@@ -55,13 +55,30 @@ So funktioniert es:
 
 ## 2. Lokal ausprobieren (optional)
 
+### Testmodus ohne echte Datenbank (empfohlen)
+
+Im Projektordner doppelt auf **`lokal-testen.bat`** klicken. Es öffnet sich ein schwarzes Fenster (offen
+lassen) und der Browser mit <http://localhost:8000/index.html?lokal>. Unten links steht **🧪 Testmodus**.
+
+- Alles bleibt in diesem Browser, nichts geht an Firebase. Man kann also gefahrlos Konten anlegen,
+  Spiele erstellen, zurücksetzen und löschen.
+- **Mehrere Spieler:** jeden in einem eigenen Browser-Tab anmelden. Änderungen erscheinen in allen Tabs.
+- Über **🧪 Testmodus** lässt sich ein **Datum simulieren** (z. B. 5. Dezember), um die Türchen zu testen,
+  und es gibt **Testdaten löschen** und **Testmodus beenden**.
+- Die Sicherheitsregeln (`firestore.rules`) werden im Testmodus **nicht** geprüft.
+- Ohne die `.bat`: Terminal im Projektordner öffnen, `python -m http.server 8000` eingeben und
+  <http://localhost:8000/index.html?lokal> öffnen.
+
+### Mit der echten Datenbank
+
 Im Projektordner ein Terminal öffnen und eingeben:
 
 ```
 python -m http.server 8000
 ```
 
-Dann im Browser <http://localhost:8000/index.html> öffnen, ein Konto erstellen und ein Testspiel anlegen.
+Dann im Browser <http://localhost:8000/index.html> öffnen (ist der Testmodus noch an:
+<http://localhost:8000/index.html?lokal=aus>), ein Konto erstellen und ein Testspiel anlegen.
 Im Reiter **⚙️ Spiel** auf **Link kopieren** klicken und den Link in einem privaten Fenster öffnen, dort
 mit einem zweiten Testkonto beitreten.
 **Achtung:** Auch lokal wird in die echte Datenbank geschrieben. Das Testspiel danach im Reiter

@@ -13,6 +13,8 @@ python -m http.server 8000
 ```
 Then open `http://localhost:8000/index.html`. ES modules need to be served over HTTP; `file://` does not work. `js/firebase-config.js` points at the **live production project**, so local runs read and write real data.
 
+**Local test mode (preferred for trying changes):** open `http://localhost:8000/index.html?lokal` (or run `lokal-testen.bat`). An inline script in `index.html`'s `<head>` (localhost only, flag `bingoLokal` in localStorage, `?lokal=aus` turns it off) injects an import map that swaps the three gstatic Firebase modules for fakes in `js/test/`: `fake-firestore.js` (docs in localStorage, batches, transactions, `onSnapshot`, `where` queries, sentinels), `fake-auth.js` (accounts in localStorage, login per tab via sessionStorage, so two tabs can be two players) and `fake-app.js`. `fake-env.js` holds the shared store, syncs tabs via the `storage` event, can shift `Date` to a simulated day (`bingoLokalDatum`, for testing doors), and shows the 🧪 panel. The fakes do **not** enforce `firestore.rules`; rules changes still need testing against the real project. When the app starts using another Firestore/Auth function, add it to the fakes. App code must not know about test mode.
+
 Firebase SDK modules are imported straight from `https://www.gstatic.com/firebasejs/10.14.1/...`. Keep every import on the same version.
 
 Deploying means uploading the files to GitHub Pages and pasting `firestore.rules` into the Firebase console (Firestore → Regeln). Nothing deploys the rules automatically. When you change the data model, update `firestore.rules` and `ANLEITUNG.md` as well.

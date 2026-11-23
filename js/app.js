@@ -558,7 +558,7 @@ $("reset-form").addEventListener("submit", async (e) => {
   }
 });
 
-/ ---------- Meine Spiele ----------
+// ---------- Meine Spiele ----------
 
 function showHome() {
   closeGame();
