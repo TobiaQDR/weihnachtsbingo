@@ -11,30 +11,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Mountains+of+Christmas:wght@700&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
-  <script>
-    // Lokaler Testmodus (nur auf localhost): einschalten mit ?lokal, ausschalten mit ?lokal=aus.
-    // Ersetzt Firebase durch eine Attrappe im Browser (js/test/), es geht nichts an die echte Datenbank.
-    (function () {
-      if (!/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)) return;
-      try {
-        var p = new URLSearchParams(location.search).get("lokal");
-        if (p === "aus") localStorage.removeItem("bingoLokal");
-        else if (p !== null) localStorage.setItem("bingoLokal", "1");
-        if (localStorage.getItem("bingoLokal") !== "1") return;
-      } catch (e) {
-        return;
-      }
-      var sdk = "https://www.gstatic.com/firebasejs/10.14.1/";
-      var imports = {};
-      imports[sdk + "firebase-app.js"] = "./js/test/fake-app.js";
-      imports[sdk + "firebase-auth.js"] = "./js/test/fake-auth.js";
-      imports[sdk + "firebase-firestore.js"] = "./js/test/fake-firestore.js";
-      var map = document.createElement("script");
-      map.type = "importmap";
-      map.textContent = JSON.stringify({ imports: imports });
-      document.currentScript.after(map);
-    })();
-  </script>
+  <script src="js/lokal.js"></script>
 </head>
 <body>
   <header class="top">
@@ -67,7 +44,7 @@
           <input id="auth-pass" type="password" autocomplete="current-password" required enterkeyhint="go">
           <button type="button" class="pw-toggle" aria-label="Passwort anzeigen" aria-pressed="false">👁️</button>
         </div>
-        <p class="hint" data-only="register">Mindestens 6 Zeichen. <strong>Gut merken!</strong> Falls du es doch vergisst, kann dir die Spielleitung einen Link zum Zurücksetzen schicken.</p>
+        <p class="hint" data-only="register">Mindestens 6 Zeichen. <strong>Gut merken!</strong> Falls du es doch vergisst, bekommst du einen Link zum Zurücksetzen.</p>
         <p id="auth-msg" class="msg"></p>
         <button type="submit" id="auth-btn" class="btn primary block">Anmelden</button>
       </form>
@@ -75,9 +52,8 @@
         <button type="button" id="forgot-open" class="link-btn">Passwort vergessen?</button>
       </p>
       <div id="forgot-box" class="sub-box" hidden>
-        <p class="muted">Kein Problem: Sag der <strong>Spielleitung</strong> deines Spiels Bescheid. Sie kann dir im Reiter
-          „⚙️ Spiel“ bei deinem Namen einen <strong>Link zum Zurücksetzen</strong> erzeugen und schicken.
-          Über den Link legst du ein neues Passwort fest.</p>
+        <p class="muted">Kein Problem: Sag <strong>Tobias</strong> Bescheid. Er schickt dir einen
+          <strong>Link zum Zurücksetzen</strong>, über den du ein neues Passwort festlegst.</p>
       </div>
       <div class="auth-guest">
         <p class="divider"><span>oder ohne Konto</span></p>
@@ -128,7 +104,7 @@
       </div>
     </div>
 
-    <!-- Neues Passwort über den Link der Spielleitung (?spiel=…&passwort=…) -->
+    <!-- Neues Passwort über den Link vom Admin (?passwort=…, erzeugt in admin.html) -->
     <div id="reset" class="card pop-in" hidden>
       <h2>🔑 Neues Passwort</h2>
       <p id="reset-for" class="muted"></p>
@@ -224,7 +200,7 @@
     <form id="pw-form" class="dialog" autocomplete="off" role="dialog" aria-modal="true" aria-labelledby="pw-title">
       <h2 id="pw-title">Passwort ändern</h2>
       <p id="pw-intro" class="muted" hidden>Einmalig nach dem Update: Bitte gib dein Passwort noch einmal ein.
-        Danach kann dir die Spielleitung ein vergessenes Passwort zurücksetzen.</p>
+        Danach kann ein vergessenes Passwort zurückgesetzt werden.</p>
       <label for="pw-old" id="pw-old-label">Bisheriges Passwort</label>
       <div class="pw-field">
         <input id="pw-old" type="password" autocomplete="current-password">

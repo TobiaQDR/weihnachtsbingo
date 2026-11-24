@@ -7,19 +7,21 @@ rules_version = '2';
 // wer ein Spiel erstellt, ist dort die Spielleitung (owner).
 //
 // Das eigentliche Firebase-Passwort ist ein Zufallsgeheimnis (secret). Das eingetippte Passwort schaltet
-// es nur frei (logins/). Eine Kopie liegt für die Spielleitung in games/{g}/recovery/, damit sie
-// einen Link zum Zurücksetzen (games/{g}/resets/) erzeugen kann.
+// es nur frei (logins/). Eine Kopie liegt in recovery/, lesbar nur für den Admin (admin.html), damit er
+// einen Link zum Zurücksetzen (resets/) erzeugen kann. Admin ist, wer in admins/ steht; diese Sammlung
+// lässt sich nur in der Firebase-Konsole anlegen und ändern.
 //
 // Aufbau:
 //   users/{uid}                  { name, games, secret, loginKey }      eigenes Konto, Liste der eigenen Spiele
 //   names/{nameKey}              { uid }                                Benutzername vergeben (alte Konten mit E-Mail)
 //   logins/{loginKey}            { uid, email, secret }                 Firebase-Anmeldedaten zum Benutzernamen;
 //                                                                         ID = Schlüssel aus Name + Passwort
+//   recovery/{uid}               { name, email, secret }                Kopie der Anmeldedaten für den Admin
+//   resets/{token}               { uid, name, email, secret, createdAt } Link zum Zurücksetzen des Passworts
+//   admins/{uid}                 { … }                                  wer Admin ist (nur über die Konsole)
 //   games/{g}                    { name, owner, ownerName, locked, songsEnabled, songsSeeded, createdAt }
 //   games/{g}/private/invite     { code, open }                         geheimer Einladungscode (nur Spielleitung)
 //   games/{g}/members/{uid}      { invite, joinedAt }                   Nachweis, dass man eingeladen wurde
-//   games/{g}/recovery/{uid}     { email, secret }                      Anmeldedaten für die Spielleitung
-//   games/{g}/resets/{token}     { uid, name, email, secret, createdAt } Link zum Zurücksetzen des Passworts
 //   games/{g}/boards/{uid}       { name, cells, canAddWords }           öffentliches Bingo-Feld, ID = Konto
 //   games/{g}/days/{1..24}       { words, updatedBy, updatedAt }        Wörter des Adventskalenders
 //   games/{g}/songs/{songId}     { title, addedBy, addedByUid }         Liederpool (ID = Titel als Kürzel)
@@ -149,6 +151,51 @@ service cloud.firestore {
       allow delete: if signedIn() && (resource == null || resource.data.uid == request.auth.uid);
     }
 
+    // ---------- Admin: Passwort zurücksetzen ----------
+
+    function isAdmin() {
+      return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    // Wer Admin ist, steht hier. Anlegen und ändern nur in der Firebase-Konsole.
+    match /admins/{uid} {
+      allow get: if signedIn() && request.auth.uid == uid;
+      allow list, create, update, delete: if false;
+    }
+
+    // Kopie der Anmeldedaten jedes Kontos. Schreibt nur das Konto selbst (Name muss zum Konto passen),
+    // lesen kann es nur der Admin.
+    match /recovery/{uid} {
+      allow get: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow list: if isAdmin();
+      allow delete: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow create, update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['name', 'email', 'secret'])
+        && request.resource.data.name == getAfter(/databases/$(database)/documents/users/$(uid)).data.name
+        && request.resource.data.email is string
+        && request.resource.data.email.size() <= 254
+        && validSecret(request.resource.data.secret);
+    }
+
+    // Link zum Zurücksetzen: legt nur der Admin an; abrufen kann ihn, wer den (zufälligen) Token kennt.
+    // Löschen: Admin oder der Spieler selbst (nach dem Benutzen).
+    match /resets/{token} {
+      allow get: if true;
+      allow list: if isAdmin();
+      allow update: if false;
+      allow create: if isAdmin()
+        && token.matches('^[a-z0-9]{20,40}$')
+        && request.resource.data.keys().hasOnly(['uid', 'name', 'email', 'secret', 'createdAt'])
+        && request.resource.data.uid is string
+        && request.resource.data.name is string
+        && request.resource.data.name.size() <= 30
+        && request.resource.data.email is string
+        && request.resource.data.email.size() <= 254
+        && validSecret(request.resource.data.secret)
+        && request.resource.data.createdAt == request.time;
+      allow delete: if signedIn() && (isAdmin() || resource.data.uid == request.auth.uid);
+    }
+
     // ---------- Spiele ----------
 
     match /games/{g} {
@@ -192,38 +239,6 @@ service cloud.firestore {
           && request.resource.data.joinedAt == request.time
           && validInvite(g, request.resource.data.invite)
           && existsAfter(boardPath(g, uid));
-      }
-
-      // Anmeldedaten eines Spielers für die Spielleitung (zum Zurücksetzen des Passworts).
-      // Schreibt nur der Spieler selbst, und nur solange er ein Feld in diesem Spiel hat.
-      match /recovery/{uid} {
-        allow read, delete: if signedIn() && (request.auth.uid == uid || isOwner(g));
-        allow create, update: if signedIn() && request.auth.uid == uid
-          && existsAfter(boardPath(g, uid))
-          && request.resource.data.keys().hasOnly(['email', 'secret'])
-          && request.resource.data.email is string
-          && request.resource.data.email.size() <= 254
-          && validSecret(request.resource.data.secret);
-      }
-
-      // Link zum Zurücksetzen: legt die Spielleitung an; abrufen kann ihn, wer den (zufälligen) Token kennt.
-      // Löschen: Spielleitung oder der Spieler selbst (nach dem Benutzen).
-      match /resets/{token} {
-        allow get: if true;
-        allow list: if isOwner(g);
-        allow update: if false;
-        allow create: if isOwner(g)
-          && token.matches('^[a-z0-9]{20,40}$')
-          && request.resource.data.keys().hasOnly(['uid', 'name', 'email', 'secret', 'createdAt'])
-          && request.resource.data.uid is string
-          && exists(boardPath(g, request.resource.data.uid))
-          && request.resource.data.name is string
-          && request.resource.data.name.size() <= 30
-          && request.resource.data.email is string
-          && request.resource.data.email.size() <= 254
-          && validSecret(request.resource.data.secret)
-          && request.resource.data.createdAt == request.time;
-        allow delete: if signedIn() && (isOwner(g) || resource.data.uid == request.auth.uid);
       }
 
       // Bingo-Felder: alle sehen alle. Jeder ändert nur die 25 Wörter seines eigenen Feldes,

@@ -13,7 +13,7 @@ python -m http.server 8000
 ```
 Then open `http://localhost:8000/index.html`. ES modules need to be served over HTTP; `file://` does not work. `js/firebase-config.js` points at the **live production project**, so local runs read and write real data.
 
-**Local test mode (preferred for trying changes):** open `http://localhost:8000/index.html?lokal` (or run `lokal-testen.bat`). An inline script in `index.html`'s `<head>` (localhost only, flag `bingoLokal` in localStorage, `?lokal=aus` turns it off) injects an import map that swaps the three gstatic Firebase modules for fakes in `js/test/`: `fake-firestore.js` (docs in localStorage, batches, transactions, `onSnapshot`, `where` queries, sentinels), `fake-auth.js` (accounts in localStorage, login per tab via sessionStorage, so two tabs can be two players) and `fake-app.js`. `fake-env.js` holds the shared store, syncs tabs via the `storage` event, can shift `Date` to a simulated day (`bingoLokalDatum`, for testing doors), and shows the 🧪 panel. The fakes do **not** enforce `firestore.rules`; rules changes still need testing against the real project. When the app starts using another Firestore/Auth function, add it to the fakes. App code must not know about test mode.
+**Local test mode (preferred for trying changes):** open `http://localhost:8000/index.html?lokal` (or run `lokal-testen.bat`, which serves via `lokal-server.py`: like `http.server` but with `Cache-Control: no-store`, so the browser never shows stale files). `js/lokal.js`, a classic script in the `<head>` of `index.html` and `admin.html` (localhost only, flag `bingoLokal` in localStorage, `?lokal=aus` turns it off) injects an import map that swaps the three gstatic Firebase modules for fakes in `js/test/`: `fake-firestore.js` (docs in localStorage, batches, transactions, `onSnapshot`, `where` queries, sentinels), `fake-auth.js` (accounts in localStorage, login per tab via sessionStorage, so two tabs can be two players) and `fake-app.js`. `fake-env.js` holds the shared store, syncs tabs via the `storage` event, can shift `Date` to a simulated day (`bingoLokalDatum`, for testing doors), and shows the 🧪 panel (incl. "make the signed-in account admin", since `admins/` is console-only in production). The fakes do **not** enforce `firestore.rules`; rules changes still need testing against the real project. When the app starts using another Firestore/Auth function, add it to the fakes. App code must not know about test mode.
 
 Firebase SDK modules are imported straight from `https://www.gstatic.com/firebasejs/10.14.1/...`. Keep every import on the same version.
 
@@ -21,12 +21,13 @@ Deploying means uploading the files to GitHub Pages and pasting `firestore.rules
 
 ## Architecture
 
-Everything runs on one page, `index.html`. `admin.html` only redirects there (old bookmarks).
+The game runs on one page, `index.html`. `admin.html` (+ `js/admin.js`) is only for the site admin (the owner of the whole site, listed in `admins/{uid}`): it lists all accounts from `recovery/` and creates password reset links.
 
 - `js/bingo.js`: pure game logic with no DOM or Firebase code (normalizing words, hit masks, bingo lines, ranking, Advent-day helpers, `SEASON_YEAR`, account helpers `cleanName`/`isValidName`/`accountEmail`/`nameKey`/`loginKey`/`newSecret`, `gameIdFrom`, `songsEnabled`, `swapCells`).
 - `js/ui.js`: shared UI building blocks (tabs with a sliding indicator that skip `hidden` buttons and expose `refresh()`, snow/confetti canvas, overlay open/close animation, toast, `copyText`, password eye toggles `initPasswordToggles`/`resetPasswords`, pointer-based drag & drop for the own grid `enableCellDrag`, Advent-calendar HTML, mini grid HTML, and the day-word editor dialog `createDayEditor`).
 - `js/songs.js`: the "Lieder" tab (`createSongsView`, `start(gameId)` returns an unsubscribe function), plus `DEFAULT_SONGS`/`seedDefaultSongs(gameId, uid)`. Pure song helpers (`songId`, `songDayOf`, `pickRandomSongs`, `SONGS_PER_DAY`) live in `bingo.js`.
-- `js/settings.js`: the owner-only "Spiel" tab (`createSettingsView`): lock, rename, songs on/off, invite link, watch link (`watchLink`), player cards (incl. password reset link, `resetLink`), reset and delete game.
+- `js/settings.js`: the owner-only "Spiel" tab (`createSettingsView`): lock, rename, songs on/off, invite link, watch link (`watchLink`), player cards, reset and delete game.
+- `js/account.js`: account code shared by `app.js` and `admin.js`: `auth`, `authReady`, `signInWithName`, `setSecret`, `saveRecovery`, `isAdmin`, `authErrorText`, `WRONG_LOGIN`.
 - `js/app.js`: screens (auth, "Meine Spiele", invite, reset, game), account logic, game switching and the player views.
 - `js/firebase.js` / `js/firebase-config.js`: Firebase init.
 
@@ -36,7 +37,7 @@ Every player has a Firebase email/password account, but nobody ever enters or re
 
 The Firebase password is **not** the password the user types. It is a random `secret` (`newSecret()`), and the typed password only unlocks it: `logins/{loginKey(name, password)}` (PBKDF2 of name + password, so only someone who knows both can find it) stores `{ uid, email, secret }`; `signInWithName()` reads it and signs in with `email` + `secret`. `users/{uid}` also holds `secret` and `loginKey`. Changing the password (`changeLoginKey()`) only moves the logins doc to the new key; the secret stays.
 
-This indirection is what lets a game owner reset a forgotten password without a server: each player writes `games/{g}/recovery/{uid}` = `{ email, secret }` (readable by the owner) for every game they don't own (`syncRecovery()` after login, in the join batch). The owner's "🔑 Passwort-Link" copies it into `games/{g}/resets/{token}` (older tokens for that uid are deleted) and shares `index.html?spiel=<g>&passwort=<token>`. Opening it (`showReset()`) signs in with the secret, then `setSecret()` writes a new secret + logins doc **before** `updatePassword()` (so a failure leaves the old secret valid), deletes the token and re-syncs recovery docs, which makes the link and every old copy worthless. Consequence: an owner can technically log into their players' accounts; this is accepted for a family game and documented in `ANLEITUNG.md`.
+This indirection is what lets the **site admin** (not game owners) reset a forgotten password without a server: every account writes `recovery/{uid}` = `{ name, email, secret }` (readable only by admins; `saveRecovery()` after every login, in the register batch, and inside `setSecret()`). In `admin.html` the admin's "🔑 Link erstellen" copies it into `resets/{token}` (older tokens for that uid are deleted) and shares `index.html?passwort=<token>`. Opening it (`showReset()`) signs in with the secret, then `setSecret()` writes a new secret + logins doc + recovery **before** `updatePassword()` (so a failure leaves the old secret valid) and deletes the token, which makes the link and every old copy worthless. Admins are listed in `admins/{uid}`, which only the Firebase console can write. Consequence: the admin can technically log into every account; this is accepted for a family game and documented in `ANLEITUNG.md`.
 
 Legacy accounts (created before this, Firebase password = typed password, maybe a real email from the removed email feature with a legacy `logins` doc `{ email, alt, uid }`) still sign in: `signInWithName()` falls back to the typed password and returns `legacy: true`, and the login is migrated via `setSecret()`. Already logged-in legacy sessions get the password dialog in "confirm" mode once per page load. `names/{nameKey}` (usernames whose synthetic address was freed by the old email feature) is only read during registration now.
 
@@ -49,11 +50,12 @@ Guests without an account can watch any game whose ID they know: the watch link 
 | `users/{uid}` | `{ name, games[], secret, loginKey }`: display name (fixed after create), the user's games, Firebase password (legacy accounts: no `secret`, maybe a stale `email`) | own uid only; create with `secret` + `loginKey`; update only `games`, `secret`, `loginKey` |
 | `names/{nameKey}` | `{ uid }`: legacy reserved username | `get` by anyone; no create; delete by that uid |
 | `logins/{loginKey}` | `{ uid, email, secret }`: Firebase credentials behind username + password | `get` by anyone, no `list`; create/update/delete by that uid |
+| `admins/{uid}` | any fields: this account is site admin | `get` own doc only; no writes (Firebase console only) |
+| `recovery/{uid}` | `{ name, email, secret }`: the account's credentials for password resets; `name` must equal `users/{uid}.name` | get/delete by self or admin, `list` by admin; create/update by self |
+| `resets/{token}` | `{ uid, name, email, secret, createdAt }`: one-time reset link | `get` by anyone (random token), `list` by admin; create by admin; delete by admin or that uid |
 | `games/{g}` | `{ name, owner, ownerName, locked, songsEnabled, songsSeeded, createdAt }`. `owner` (creator) is the game master; `songsEnabled` missing = on | `get` by anyone, `list` by nobody; create with `owner == auth.uid`; update (`name`, `locked`, `songsEnabled`, `songsSeeded`) and delete by owner |
 | `games/{g}/private/invite` | `{ code, open }`: secret invite code for `index.html?spiel=<g>&einladung=<code>` | owner only (rules still `get()` it) |
 | `games/{g}/members/{uid}` | `{ invite, joinedAt }`: private proof of invitation | read/delete by self or owner; create by self with a valid open invite, only together with the board (`existsAfter`) |
-| `games/{g}/recovery/{uid}` | `{ email, secret }`: the player's credentials for password resets | read/delete by self or owner; create/update by self while the board exists (`existsAfter`) |
-| `games/{g}/resets/{token}` | `{ uid, name, email, secret, createdAt }`: one-time reset link | `get` by anyone (random token), `list` by owner; create by owner for an existing board; delete by owner or that uid |
 | `games/{g}/boards/{uid}` | `{ name, cells[25], canAddWords }`: public bingo board; doc ID = account uid | read all; create by self (empty cells, name = `users/{uid}.name`) if owner or with a `members` doc in the same batch; self may change only `cells` while not locked; owner may change only `canAddWords`; delete by self (leave) or owner (remove) |
 | `games/{g}/days/{1..24}` | `{ words[], updatedBy, updatedAt }` | read all; write by owner or by players whose board has `canAddWords != false` |
 | `games/{g}/songs/{songId}` | `{ title, addedBy, addedByUid }`: song pool; doc ID = `songId(title)` slug | read all; create by owner or players (`addedByUid == auth.uid`, only while `songsOn(g)`); delete by the adder or the owner |
@@ -63,11 +65,11 @@ Old top-level collections (`game`, `players`, `logins`, `boards`, …) from the 
 
 Flows (all multi-doc writes are **one batch** so the rules can cross-check with `getAfter()`/`existsAfter()`):
 - Create game: `games/{g}` + `private/invite` + own `boards/{uid}` + `arrayUnion` in `users/{uid}.games`; then `seedDefaultSongs` sets `songsSeeded` (retried when the owner opens the game).
-- Register: `createUserWithEmailAndPassword(accountEmail, secret)`, then `users/{uid}` + `logins/{key}` in one batch (`signedIn(user, created)`).
-- Join via invite: `boards/{uid}` + `members/{uid}` (with the invite code) + `recovery/{uid}` + `arrayUnion`.
-- Leave: delete board + member + recovery + `arrayRemove`. The owner cannot leave, only delete the game.
-- Owner removes a player: delete board + member + recovery. The removed player's `users.games` is cleaned up by their own client when it sees a server snapshot without its board (`render()` in `app.js`); deleted games are cleaned up the same way (`gameGone()`, `loadGameInfos()`).
-- Reset (`resetGame()` in `settings.js`): unlock, delete other boards, members, recovery, resets, `songDays` (optionally `days`), clear the owner's cells. Delete game: all subcollections, then the game doc.
+- Register: `createUserWithEmailAndPassword(accountEmail, secret)`, then `users/{uid}` + `logins/{key}` + `recovery/{uid}` in one batch (`signedIn(user, created)`).
+- Join via invite: `boards/{uid}` + `members/{uid}` (with the invite code) + `arrayUnion`.
+- Leave: delete board + member + `arrayRemove`. The owner cannot leave, only delete the game.
+- Owner removes a player: delete board + member. The removed player's `users.games` is cleaned up by their own client when it sees a server snapshot without its board (`render()` in `app.js`); deleted games are cleaned up the same way (`gameGone()`, `loadGameInfos()`).
+- Reset (`resetGame()` in `settings.js`): unlock, delete other boards, members, `songDays` (optionally `days`), clear the owner's cells. Delete game: all subcollections, then the game doc.
 
 Switching games happens in place: `openGame()` unsubscribes everything in `gameUnsubs` (`closeGame()`), resets the per-game state and subscribes again. The settings listener is started only for the owner. The songs listener is separate (`songsUnsub`): `syncSongs()` in `render()` starts or stops it whenever `songsEnabled(game)` changes, and the "Lieder" tab plus the song info in calendar and day editor (`daySongs()`) are hidden while songs are off.
 

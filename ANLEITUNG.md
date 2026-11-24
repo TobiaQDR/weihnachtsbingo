@@ -10,7 +10,7 @@ Einmalig ca. 20–30 Minuten. Kostet nichts. Du brauchst ein Google-Konto (für 
 | Datei | Wofür |
 |---|---|
 | `index.html` | Die ganze Seite: anmelden, eigene Spiele, Spiele erstellen, mitspielen, Spielleitung |
-| `admin.html` | Nur noch eine Weiterleitung auf `index.html` (für alte Lesezeichen) |
+| `admin.html` | Nur für dich als Admin: Links zum Zurücksetzen vergessener Passwörter |
 | `js/firebase-config.js` | **Hier trägst du deine Firebase-Daten ein** |
 | `firestore.rules` | Sicherheitsregeln, werden in Firebase eingefügt |
 
@@ -24,8 +24,8 @@ So funktioniert es:
   Unter „🏠 Meine Spiele“ sieht man alle Spiele, bei denen man mitmacht, und oben im Spiel kann man
   über die Auswahlliste zwischen ihnen wechseln.
 - **Zuschauen geht auch ohne Konto**, als Gast mit dem Link zum Spiel.
-- Eine **E-Mail-Adresse** braucht niemand. Wer sein Passwort vergisst, bekommt von der Spielleitung
-  einen Link, mit dem er ein neues festlegt.
+- Eine **E-Mail-Adresse** braucht niemand. Wer sein Passwort vergisst, bekommt **von dir als Admin**
+  (über `admin.html`) einen Link, mit dem er ein neues festlegt. Die Spielleitungen haben damit nichts zu tun.
 
 ---
 
@@ -46,6 +46,8 @@ So funktioniert es:
 6. Öffne `js/firebase-config.js` und trage die Werte aus `firebaseConfig` ein (apiKey, authDomain, projectId, …).
 7. Öffne `firestore.rules`, kopiere den **ganzen Inhalt** in Firebase unter
    **Firestore Database → Regeln** und klicke auf **Veröffentlichen**.
+8. Später, wenn die Seite läuft und du ein Konto hast: dich zum **Admin** machen (siehe
+   [„Admin einrichten“](#admin-einrichten-passwort-links)).
 
 > Die Werte in `firebase-config.js` sind nicht geheim, sie stehen später sowieso öffentlich in der Webseite.
 > Geschützt wird alles durch die Regeln: Nur die Spielleitung eines Spiels kann sperren, Rechte vergeben und
@@ -66,8 +68,11 @@ lassen) und der Browser mit <http://localhost:8000/index.html?lokal>. Unten link
 - Über **🧪 Testmodus** lässt sich ein **Datum simulieren** (z. B. 5. Dezember), um die Türchen zu testen,
   und es gibt **Testdaten löschen** und **Testmodus beenden**.
 - Die Sicherheitsregeln (`firestore.rules`) werden im Testmodus **nicht** geprüft.
-- Ohne die `.bat`: Terminal im Projektordner öffnen, `python -m http.server 8000` eingeben und
-  <http://localhost:8000/index.html?lokal> öffnen.
+- Ohne die `.bat`: Terminal im Projektordner öffnen, `python lokal-server.py` eingeben und
+  <http://localhost:8000/index.html?lokal> öffnen. (Dieser Server sorgt dafür, dass der Browser keine
+  alten Dateien aus dem Zwischenspeicher zeigt.)
+- Der Admin-Bereich lokal: <http://localhost:8000/admin.html>. Vorher im 🧪-Menü
+  „Angemeldetes Konto zum Admin machen“ tippen.
 
 ### Mit der echten Datenbank
 
@@ -150,24 +155,39 @@ mit einem zweiten Testkonto beitreten.
 
 - Wer sein Passwort noch weiß, kann es unter dem eigenen Feld oder unter „Meine Spiele“ mit
   **🔑 Passwort ändern** jederzeit ändern.
-- **Passwort vergessen?** Der Spielleitung Bescheid sagen. Sie tippt im Reiter **⚙️ Spiel** auf der
-  Karte des Spielers auf **🔑 Passwort-Link** und schickt den Link (per WhatsApp-Knopf oder kopiert).
+- **Passwort vergessen?** Dem Admin (dir) Bescheid sagen. Du öffnest `admin.html`, suchst den Namen,
+  tippst auf **🔑 Link erstellen** und schickst den Link (per WhatsApp-Knopf oder kopiert).
   Wer den Link öffnet, legt ein neues Passwort fest und ist gleich angemeldet. Danach meldet man sich
   wie gewohnt mit Benutzername und neuem Passwort an.
-- Der Link funktioniert **nur einmal**. Erzeugt die Spielleitung einen neuen, wird der alte ungültig.
+- Das gilt für **alle Konten**, egal in welchen Spielen jemand mitspielt oder ob er selbst Spielleitung ist.
+- Der Link funktioniert **nur einmal**. Erzeugst du einen neuen, wird der alte ungültig.
   Den Link nur an die betroffene Person schicken, nicht in die Gruppe: Wer ihn hat, kommt in das Konto.
-- Wer selbst ein Spiel leitet, kann sich das Passwort von der Spielleitung eines **anderen** Spiels
-  zurücksetzen lassen, bei dem er mitspielt. Gibt es keins, lässt sich das Passwort nicht zurücksetzen.
-  **Als Spielleitung das eigene Passwort also besonders gut merken.**
+- **Dein eigenes Passwort als Admin gut merken:** Vergisst du es, kannst du dir selbst keinen Link mehr
+  über `admin.html` erstellen. (Dann hilft nur, in der Firebase-Konsole ein zweites Konto zum Admin zu
+  machen und damit den Link zu erzeugen.)
 - **Konten von vor diesem Update:** Beim ersten Öffnen nach dem Update fragt die Seite einmal nach dem
-  Passwort (oder man meldet sich einfach neu an). Erst danach kann die Spielleitung einen Passwort-Link
-  erzeugen. Weiß jemand sein Passwort schon nicht mehr und ist auch nirgends mehr angemeldet, hilft nur
+  Passwort (oder man meldet sich einfach neu an). Erst danach taucht das Konto in `admin.html` auf.
+  Weiß jemand sein Passwort schon nicht mehr und ist auch nirgends mehr angemeldet, hilft nur
   ein neues Konto mit anderem Namen und erneutes Beitreten über den Einladungslink.
 
-> **Gut zu wissen:** Damit das ohne eigenen Server klappt, kann die Spielleitung eines Spiels technisch
-> auf die Konten ihrer Mitspieler zugreifen (genau das macht der Passwort-Link möglich). Das eingetippte
-> Passwort selbst sieht sie nie. Tritt also nur Spielen von Leuten bei, denen du vertraust; in der Familie
-> ist das kein Thema.
+> **Gut zu wissen:** Damit das ohne eigenen Server klappt, kann der Admin technisch auf alle Konten
+> zugreifen (genau das macht der Passwort-Link möglich). Das eingetippte Passwort selbst sieht er nie.
+> Die Spielleitungen der einzelnen Spiele können das **nicht**.
+
+### Admin einrichten (Passwort-Links)
+
+Einmalig, sobald du ein Konto auf der Seite hast:
+
+1. `admin.html` öffnen (z. B. `https://<dein-name>.github.io/weihnachtsbingo/admin.html`) und mit deinem
+   normalen Konto anmelden. Es erscheint **🚫 Kein Zugriff** mit deiner **Konto-ID** – auf **kopieren** tippen.
+2. In Firebase **Firestore Database → Daten → Sammlung starten**:
+   - Sammlungs-ID: `admins`
+   - Dokument-ID: die kopierte Konto-ID einfügen
+   - ein Feld anlegen, z. B. Name `aktiv`, Typ `boolean`, Wert `true` → Speichern
+3. `admin.html` neu laden: Jetzt siehst du alle Konten und kannst Passwort-Links erstellen.
+
+Diese Sammlung kann nur in der Firebase-Konsole geändert werden, nicht über die Seite. Einen weiteren
+Admin legst du genauso an; Admin-Rechte entziehen = das Dokument dort löschen.
 
 ### Spieler verwalten (Spielleitung)
 
@@ -175,8 +195,6 @@ Im Reiter **⚙️ Spiel** hat jeder Spieler eine Karte:
 
 - **„Darf Tageswörter eintragen“**: Recht wegnehmen oder wieder geben.
 - **Feld ansehen**: das Feld des Spielers aufklappen.
-- **🔑 Passwort-Link**: Link erzeugen, mit dem der Spieler ein neues Passwort festlegt (siehe
-  „Passwort ändern oder vergessen“).
 - **Entfernen**: Spieler samt Feld aus dem Spiel nehmen. Er sieht das Spiel dann nicht mehr in seiner
   Liste und kann nur mit dem Einladungslink wieder beitreten.
 
@@ -258,6 +276,20 @@ Der kostenlose Firebase-Tarif „Spark“ erlaubt 50.000 Lesevorgänge und 20.00
 Eine Familie braucht davon nur einen Bruchteil. Es ist keine Kreditkarte nötig, also können keine Kosten entstehen.
 
 ## Update auf die neue Version
+
+### Update „Passwort-Links nur über admin.html“
+
+Passwort-Links erstellt jetzt nur noch der Admin über `admin.html`, nicht mehr die Spielleitung.
+
+1. **Zuerst** den Inhalt von `firestore.rules` in Firebase unter **Firestore Database → Regeln**
+   einfügen und **Veröffentlichen**.
+2. Dann alle Dateien wieder bei GitHub hochladen (neu: `admin.html`, `js/admin.js`, `js/account.js`,
+   `js/lokal.js`).
+3. Dich zum Admin machen, siehe [„Admin einrichten“](#admin-einrichten-passwort-links).
+4. Die Konten erscheinen in `admin.html`, sobald sich jeder einmal mit der neuen Version angemeldet hat
+   (wer schon angemeldet ist: einfach die Seite öffnen).
+5. Optional aufräumen: In **Firestore Database → Daten** unter jedem Spiel die Untersammlungen
+   `recovery` und `resets` löschen (falls vorhanden). Sie werden nicht mehr benutzt.
 
 ### Update „Passwort-Link statt E-Mail“
 

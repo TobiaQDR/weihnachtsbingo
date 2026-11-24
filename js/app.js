@@ -3,14 +3,17 @@ import {
   arrayUnion, arrayRemove,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import {
-  getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut,
-  EmailAuthProvider, reauthenticateWithCredential, updatePassword,
+  signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut,
+  EmailAuthProvider, reauthenticateWithCredential,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
-import { app, db, configured } from "./firebase.js";
+import { db, configured } from "./firebase.js";
+import {
+  auth, authReady, signInWithName, setSecret, saveRecovery, authErrorText, WRONG_LOGIN,
+} from "./account.js";
 import {
   CELL_COUNT, MIN_PASSWORD_LENGTH, MAX_GAME_NAME_LENGTH, SEASON_YEAR, normalize, cleanWord, cleanName,
   isValidName, accountEmail, cellsOf, canAddWords, daysMap, drawnMap, scoreBoard, ranking, isDayOpen,
-  escapeHtml, emptyCells, randomId, swapCells, nameKey, loginKey, newSecret, gameIdFrom, songsEnabled,
+  escapeHtml, emptyCells, swapCells, nameKey, loginKey, newSecret, gameIdFrom, songsEnabled, randomId,
 } from "./bingo.js";
 import {
   $, toast, initTabs, startSnow, confetti, openOverlay, closeOverlay, miniGridHtml, calendarHtml,
@@ -27,16 +30,9 @@ import { createSettingsView } from "./settings.js";
 //   games/{g}                  { name, owner, ownerName, locked, songsEnabled, songsSeeded, createdAt }
 //   games/{g}/boards/{uid}     { name, cells[25], canAddWords } Bingo-Feld, Dokument-ID = Konto
 //   games/{g}/members/{uid}    { invite, joinedAt }            Nachweis der Einladung (privat)
-//   games/{g}/recovery/{uid}   { email, secret }               Anmeldedaten für die Spielleitung (Zurücksetzen)
-//   games/{g}/resets/{token}   { uid, name, email, secret, createdAt }  Link zum Zurücksetzen (?spiel=…&passwort=…)
 //   games/{g}/days/{1..24}, songs/{id}, songDays/{1..24}, private/invite
-//
-// Das eigentliche Firebase-Passwort ist ein Zufallsgeheimnis (secret). Das Passwort, das der Spieler
-// eintippt, schaltet es nur frei (logins/). So kann die Spielleitung ohne Server ein Passwort zurücksetzen:
-// Sie gibt das Geheimnis per Link weiter, der Spieler legt damit ein neues Passwort fest, und das Geheimnis
-// wird dabei ausgetauscht (der Link ist danach wertlos).
+//   recovery/{uid}, resets/{token}, admins/{uid}   Passwort zurücksetzen über admin.html (siehe account.js)
 
-const auth = configured ? getAuth(app) : null;
 /** Adresse beim Öffnen der Seite (Einladungslink: ?spiel=…&einladung=…). */
 const startParams = new URLSearchParams(location.search);
 
@@ -57,7 +53,7 @@ const state = {
   boardsFromCache: true, // Felder bisher nur aus dem Zwischenspeicher (noch nicht vom Server bestätigt)
   pendingTab: null,      // Reiter, der beim nächsten Öffnen eines Spiels gezeigt wird
   invite: null,          // { gameId, code } aus dem Einladungslink
-  reset: null,           // { gameId, token, uid, name, email, secret } aus dem Link zum Zurücksetzen
+  reset: null,           // { token, uid, name, email, secret } aus dem Link zum Zurücksetzen
 };
 /** Abos des geöffneten Spiels – beim Wechseln alle abbestellen. */
 let gameUnsubs = [];
@@ -69,8 +65,6 @@ let linkGame = startParams.get("spiel");
 const relisted = new Set();
 let tabs;
 
-/** Spiele, in denen die Anmeldedaten für die Spielleitung schon hinterlegt wurden. */
-const recoverySynced = new Set();
 /** Hinweis „Passwort einmal bestätigen“ (alte Konten) nur einmal pro Seitenaufruf. */
 let confirmAsked = false;
 
@@ -140,11 +134,9 @@ if (!configured) {
 }
 
 async function boot() {
-  await (typeof auth.authStateReady === "function"
-    ? auth.authStateReady()
-    : new Promise((resolve) => { const off = onAuthStateChanged(auth, () => { off(); resolve(); }); }));
-  // Link der Spielleitung zum Zurücksetzen des Passworts
-  if (linkGame && startParams.get("passwort")) return showReset(linkGame, startParams.get("passwort"));
+  await authReady();
+  // Link vom Admin zum Zurücksetzen des Passworts
+  if (startParams.get("passwort")) return showReset(startParams.get("passwort"));
   const user = auth.currentUser;
   if (user && !user.isAnonymous) return signedIn(user);
   // Anonyme Anmeldung aus der alten Version aufräumen
@@ -188,6 +180,7 @@ async function signedIn(user, created = null) {
     const batch = writeBatch(db);
     batch.set(ref, { name: created.name, games: [], secret: created.secret, loginKey: created.key });
     batch.set(doc(db, "logins", created.key), { uid: user.uid, email: user.email, secret: created.secret });
+    batch.set(doc(db, "recovery", user.uid), { name: created.name, email: user.email, secret: created.secret });
     await batch.commit();
     snap = await getDoc(ref);
   }
@@ -204,7 +197,7 @@ async function signedIn(user, created = null) {
   }, (err) => console.error("Konto:", err));
 
   await loadGameInfos();
-  syncRecovery();
+  if (!created) saveRecovery(user, userName(), state.profile.secret);
   // Alte Konten: Firebase-Passwort ist noch das eingetippte – einmal bestätigen lassen
   if (!hasSecret() && !confirmAsked) {
     confirmAsked = true;
@@ -231,42 +224,9 @@ function profileOf(data) {
 /** Konto nutzt schon ein Zufallsgeheimnis als Firebase-Passwort (sonst: altes Konto). */
 const hasSecret = () => Boolean(state.profile?.secret && state.profile?.loginKey);
 
-/**
- * Anmeldedaten für die Spielleitung hinterlegen (games/{g}/recovery/{uid}), damit sie einen Link
- * zum Zurücksetzen erzeugen kann. Nur in Spielen, die man nicht selbst leitet.
- */
-async function syncRecovery(force = false) {
-  const user = auth.currentUser;
-  const secret = state.profile?.secret;
-  if (!user || !secret) return;
-  if (force) recoverySynced.clear();
-  const ids = myGames().filter((id) => !recoverySynced.has(id) && state.gameInfo.get(id)?.owner !== user.uid);
-  await Promise.all(ids.map(async (id) => {
-    try {
-      await setDoc(doc(db, "games", id, "recovery", user.uid), { email: user.email, secret });
-      recoverySynced.add(id);
-    } catch (err) {
-      console.warn("Anmeldedaten für die Spielleitung nicht hinterlegt:", id, err);
-    }
-  }));
-}
-
-/**
- * Neues Zufallsgeheimnis als Firebase-Passwort setzen und unter dem Schlüssel aus Name + Passwort
- * ablegen. Erst speichern, dann das Firebase-Passwort ändern: Scheitert das, gilt das alte noch.
- * Braucht eine frische Anmeldung.
- */
-async function setSecret(user, name, password, oldKey = "") {
-  const secret = newSecret();
-  const key = await loginKey(name, password);
-  const batch = writeBatch(db);
-  if (oldKey && oldKey !== key) batch.delete(doc(db, "logins", oldKey));
-  batch.set(doc(db, "logins", key), { uid: user.uid, email: user.email, secret });
-  batch.update(doc(db, "users", user.uid), { secret, loginKey: key });
-  await batch.commit();
-  await updatePassword(user, secret);
-  if (state.profile && state.user?.uid === user.uid) Object.assign(state.profile, { secret, loginKey: key });
-  return secret;
+/** Nach setSecret(): neue Anmeldedaten auch im Zustand der Seite übernehmen. */
+function rememberSecret({ secret, key }) {
+  if (state.profile) Object.assign(state.profile, { secret, loginKey: key });
 }
 
 /** Namen der eigenen Spiele holen. Gelöschte Spiele fliegen aus der eigenen Liste. */
@@ -369,7 +329,7 @@ $("auth-form").addEventListener("submit", async (e) => {
       if (legacy) {
         // Altes Konto: auf ein Zufallsgeheimnis umstellen (klappt das nicht, bleibt es beim alten Passwort)
         try {
-          await setSecret(user, name, password);
+          await setSecret(user, name, password); // Profil wird danach in signedIn() frisch geladen
         } catch (err) {
           console.warn("Konto nicht umgestellt:", err);
         }
@@ -387,70 +347,6 @@ $("auth-form").addEventListener("submit", async (e) => {
     $("auth-btn").disabled = false;
   }
 });
-
-/**
- * Anmelden mit Benutzername + Passwort. Normalfall: logins/{Schlüssel} liefert das Geheimnis, das das
- * eigentliche Firebase-Passwort ist. Alte Konten (noch ohne Geheimnis) melden sich direkt mit dem
- * eingetippten Passwort an – an der erfundenen Adresse oder einer früher hinterlegten E-Mail-Adresse.
- * @returns {Promise<{ user, legacy: boolean }>}
- */
-async function signInWithName(name, password) {
-  let stored = null;
-  try {
-    const s = await getDoc(doc(db, "logins", await loginKey(name, password)));
-    if (s.exists()) stored = s.data();
-  } catch (err) {
-    console.warn("Anmeldedaten:", err);
-  }
-  const synthetic = await accountEmail(name);
-  let lastErr;
-  if (typeof stored?.secret === "string") {
-    try {
-      const email = String(stored.email || synthetic);
-      return { user: (await signInWithEmailAndPassword(auth, email, stored.secret)).user, legacy: false };
-    } catch (err) {
-      lastErr = err;
-      if (!WRONG_LOGIN.includes(err.code)) throw err;
-    }
-  }
-  // Alte Konten; alte Einträge { email, alt } = früher hinterlegte E-Mail-Adressen
-  const candidates = [...new Set([stored?.email, stored?.alt, synthetic].map((x) => String(x ?? "")).filter(Boolean))];
-  for (const email of candidates) {
-    try {
-      return { user: (await signInWithEmailAndPassword(auth, email, password)).user, legacy: true };
-    } catch (err) {
-      lastErr = err;
-      if (!WRONG_LOGIN.includes(err.code)) throw err;
-    }
-  }
-  throw lastErr;
-}
-
-const WRONG_LOGIN = ["auth/invalid-credential", "auth/invalid-login-credentials", "auth/user-not-found", "auth/wrong-password"];
-
-function authErrorText(err) {
-  switch (err?.code) {
-    case "auth/email-already-in-use":
-      return "Diesen Benutzernamen gibt es schon. Bist du das? Dann wähle oben „Anmelden“. Sonst nimm bitte einen anderen Namen.";
-    case "auth/invalid-credential":
-    case "auth/invalid-login-credentials":
-    case "auth/wrong-password":
-    case "auth/user-not-found":
-      return "Benutzername oder Passwort stimmt nicht. Noch kein Konto? Dann wähle oben „Konto erstellen“.";
-    case "auth/weak-password":
-      return `Das Passwort ist zu kurz (mindestens ${MIN_PASSWORD_LENGTH} Zeichen).`;
-    case "auth/too-many-requests":
-      return "Zu viele Versuche. Bitte warte kurz und versuche es dann nochmal.";
-    case "auth/requires-recent-login":
-      return "Bitte melde dich kurz ab und wieder an und versuche es dann nochmal.";
-    case "auth/network-request-failed":
-      return "Keine Verbindung. Bitte prüfe die Internetverbindung.";
-    case "auth/operation-not-allowed":
-      return "Anmelden ist noch nicht eingerichtet (in Firebase „E-Mail/Passwort“ aktivieren).";
-    default:
-      return "Das hat leider nicht geklappt. Bitte nochmal versuchen.";
-  }
-}
 
 $("auth-guest").addEventListener("click", () => {
   if (linkGame) return watchAsGuest(linkGame);
@@ -483,19 +379,19 @@ $("guest-form").addEventListener("submit", async (e) => {
   watchAsGuest(id);
 });
 
-// Passwort vergessen: Hinweis auf die Spielleitung
+// Passwort vergessen: Hinweis auf den Admin
 $("forgot-open").addEventListener("click", () => {
   $("forgot-box").hidden = !$("forgot-box").hidden;
 });
 
-// ---------- Neues Passwort über den Link der Spielleitung ----------
+// ---------- Neues Passwort über den Link vom Admin ----------
 
-async function showReset(gameId, token) {
+async function showReset(token) {
   showScreen("loading");
   greet("Neues Passwort 🔑");
   let snap;
   try {
-    snap = await getDoc(doc(db, "games", gameId, "resets", token));
+    snap = await getDoc(doc(db, "resets", token));
   } catch (err) {
     return onLoadError(err);
   }
@@ -507,11 +403,11 @@ async function showReset(gameId, token) {
       toast("🔑 Dieser Link zum Zurücksetzen ist ungültig oder wurde schon benutzt.", 6000);
       return signedIn(user);
     }
-    return showAuth("🔑 Dieser Link zum Zurücksetzen ist ungültig oder wurde schon benutzt. Frag bei der Spielleitung nach einem neuen.");
+    return showAuth("🔑 Dieser Link zum Zurücksetzen ist ungültig oder wurde schon benutzt. Frag nach einem neuen.");
   }
   const d = snap.data();
   state.reset = {
-    gameId, token, uid: String(d.uid), name: String(d.name ?? ""), email: String(d.email), secret: String(d.secret),
+    token, uid: String(d.uid), name: String(d.name ?? ""), email: String(d.email), secret: String(d.secret),
   };
   const current = auth.currentUser;
   $("reset-for").textContent = `Für das Konto „${state.reset.name}“.`
@@ -541,17 +437,17 @@ $("reset-form").addEventListener("submit", async (e) => {
     if (auth.currentUser) await signOut(auth);
     const user = (await signInWithEmailAndPassword(auth, r.email, r.secret)).user;
     const profile = profileOf((await getDoc(doc(db, "users", user.uid))).data());
-    // Neues Geheimnis: Der Link und alles, was die Spielleitung bisher kannte, wird damit wertlos
+    // Neues Geheimnis: Der Link (und jede alte Kopie des Geheimnisses) wird damit wertlos
     await setSecret(user, profile.name || r.name, password, profile.loginKey);
-    await deleteDoc(doc(db, "games", r.gameId, "resets", r.token)).catch((err) => console.warn(err));
+    await deleteDoc(doc(db, "resets", r.token)).catch((err) => console.warn(err));
     state.reset = null;
     resetPasswords($("reset"));
-    await signedIn(user); // hinterlegt dabei auch das neue Geheimnis für die Spielleitungen
+    await signedIn(user);
     toast(`🔑 Neues Passwort gespeichert. Willkommen zurück, ${userName()}!`, 5000);
   } catch (err) {
     console.error(err);
     msg.textContent = WRONG_LOGIN.includes(err.code)
-      ? "Dieser Link ist nicht mehr gültig. Frag bei der Spielleitung nach einem neuen."
+      ? "Dieser Link ist nicht mehr gültig. Frag nach einem neuen."
       : authErrorText(err);
   } finally {
     $("reset-btn").disabled = false;
@@ -676,11 +572,7 @@ $("invite-join").addEventListener("click", async () => {
     batch.set(doc(db, "games", gameId, "boards", uid), { name: userName(), cells: emptyCells(), canAddWords: true });
     batch.set(doc(db, "games", gameId, "members", uid), { invite: code, joinedAt: serverTimestamp() });
     batch.update(doc(db, "users", uid), { games: arrayUnion(gameId) });
-    // Anmeldedaten für die Spielleitung (damit sie ein vergessenes Passwort zurücksetzen kann)
-    const secret = state.profile?.secret;
-    if (secret) batch.set(doc(db, "games", gameId, "recovery", uid), { email: state.user.email, secret });
     await batch.commit();
-    if (secret) recoverySynced.add(gameId);
   } catch (err) {
     console.error(err);
     $("invite-msg").textContent = "Beitreten hat nicht geklappt. Vielleicht ist der Einladungslink nicht mehr gültig oder der Beitritt geschlossen – frag bitte bei der Spielleitung nach.";
@@ -883,11 +775,10 @@ $("pw-form").addEventListener("submit", async (e) => {
     } else {
       // Altes Konto: Passwort bei Firebase prüfen und auf ein Zufallsgeheimnis umstellen
       await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, oldPw));
-      await setSecret(user, userName(), newPw, state.profile.loginKey);
-      await syncRecovery(true);
+      rememberSecret(await setSecret(user, userName(), newPw, state.profile.loginKey));
     }
     closePasswordDialog();
-    toast(confirmMode ? "✅ Danke! Jetzt kann dir die Spielleitung bei Bedarf ein neues Passwort ermöglichen." : "🔑 Neues Passwort gespeichert.", 5000);
+    toast(confirmMode ? "✅ Danke! Falls du dein Passwort mal vergisst, kann es jetzt zurückgesetzt werden." : "🔑 Neues Passwort gespeichert.", 5000);
   } catch (err) {
     console.error(err);
     msg.textContent = WRONG_LOGIN.includes(err.code)
@@ -922,7 +813,6 @@ $("leave").addEventListener("click", async () => {
     const batch = writeBatch(db);
     batch.delete(doc(db, "games", gameId, "boards", uid));
     batch.delete(doc(db, "games", gameId, "members", uid));
-    batch.delete(doc(db, "games", gameId, "recovery", uid));
     batch.update(doc(db, "users", uid), { games: arrayRemove(gameId) });
     await batch.commit();
     toast(`🚪 Du hast „${name}“ verlassen.`, 4000);

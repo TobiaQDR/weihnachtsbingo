@@ -4,11 +4,9 @@
 //
 //   games/{g}                 { name, owner, ownerName, locked, songsEnabled, songsSeeded, createdAt }
 //   games/{g}/private/invite  { code, open }   nur die Spielleitung liest ihn
-//   games/{g}/recovery/{uid}  { email, secret }   Anmeldedaten der Spieler (nur Spielleitung und der Spieler)
-//   games/{g}/resets/{token}  { uid, name, email, secret, createdAt }   Link zum Zurücksetzen des Passworts
 
 import {
-  doc, collection, onSnapshot, getDoc, getDocs, updateDoc, writeBatch, arrayRemove, query, where, serverTimestamp,
+  doc, collection, onSnapshot, getDocs, updateDoc, writeBatch, arrayRemove,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { db } from "./firebase.js";
 import {
@@ -28,13 +26,6 @@ export function inviteLink(gameId, code) {
 export function watchLink(gameId) {
   const url = new URL("index.html", location.href);
   url.search = new URLSearchParams({ spiel: gameId, zuschauen: "1" }).toString();
-  return url.toString();
-}
-
-/** Link zum Zurücksetzen des Passworts (einmal gültig). */
-export function resetLink(gameId, token) {
-  const url = new URL("index.html", location.href);
-  url.search = new URLSearchParams({ spiel: gameId, passwort: token }).toString();
   return url.toString();
 }
 
@@ -152,26 +143,6 @@ export function createSettingsView({ root, getCtx, onDeleted, onSongsOn = () => 
       </div>
     </form>`);
 
-  const pwDialog = overlay(`
-    <form class="dialog" autocomplete="off" role="dialog" aria-modal="true" aria-labelledby="pwlink-title">
-      <h2 id="pwlink-title">🔑 Passwort zurücksetzen</h2>
-      <p>Schick diesen Link an <strong data-player></strong>. Damit legt <span data-player></span> ein neues Passwort fest.</p>
-      <input type="text" data-link readonly aria-label="Link zum Zurücksetzen">
-      <div class="row wrap-row actions">
-        <button type="button" class="btn small" data-copy>🔗 Link kopieren</button>
-        <a class="btn small" data-wa target="_blank" rel="noopener">💬 WhatsApp</a>
-      </div>
-      <p class="muted">Der Link funktioniert <strong>einmal</strong>. Schick ihn nur an diese Person: Wer ihn öffnet,
-        kann das Passwort festlegen und ist dann mit dem Konto angemeldet.</p>
-      <p class="msg" data-msg></p>
-      <div class="buttons">
-        <button type="button" class="btn ghost" data-cancel>Schließen</button>
-      </div>
-    </form>`);
-  pwDialog.q("[data-copy]").addEventListener("click", () => copyText(pwDialog.q("[data-link]").value));
-  pwDialog.q("[data-link]").addEventListener("focus", (e) => e.target.select());
-  pwDialog.q("form").addEventListener("submit", (e) => e.preventDefault());
-
   const q = (sel) => root.querySelector(sel);
   const ctx = () => getCtx();
   const gameRef = () => doc(db, "games", ctx().gameId);
@@ -268,8 +239,7 @@ ${link}`);
           </label>`}
           <div class="row wrap-row actions">
             <button type="button" class="btn small ghost" data-toggle="${escapeHtml(id)}">Feld ansehen</button>
-            ${isMe ? "" : `<button type="button" class="btn small ghost" data-reset-pw="${escapeHtml(id)}">🔑 Passwort-Link</button>
-            <button type="button" class="btn small ghost danger" data-del="${escapeHtml(id)}">Entfernen</button>`}
+            ${isMe ? "" : `<button type="button" class="btn small ghost danger" data-del="${escapeHtml(id)}">Entfernen</button>`}
           </div>
           <div class="collapse"><div class="collapse-inner"></div></div>`;
       }
@@ -359,18 +329,6 @@ ${link}`);
       const id = t.dataset.toggle;
       st.openGrids.has(id) ? st.openGrids.delete(id) : st.openGrids.add(id);
       renderPlayers();
-    } else if (t.dataset.resetPw) {
-      const b = ctx().boards.find((x) => x.id === t.dataset.resetPw);
-      if (!b) return;
-      t.disabled = true;
-      try {
-        await createResetLink(b);
-      } catch (err) {
-        console.error(err);
-        toast("Der Link konnte nicht erzeugt werden: " + err.message, 6000);
-      } finally {
-        t.disabled = false;
-      }
     } else if (t.dataset.del) {
       const b = ctx().boards.find((x) => x.id === t.dataset.del);
       if (!b || !confirm(`${b.name} wirklich aus dem Spiel entfernen? Das Feld wird dabei gelöscht.`)) return;
@@ -379,7 +337,6 @@ ${link}`);
       const batch = writeBatch(db);
       batch.delete(sub("boards", b.id));
       batch.delete(sub("members", b.id));
-      batch.delete(sub("recovery", b.id));
       if (!(await save(batch.commit(), `${b.name} entfernt.`))) card.classList.remove("leaving");
     }
   });
@@ -425,56 +382,6 @@ ${link}`);
   // ---------- Aktionen ----------
 
   /**
-   * Link zum Zurücksetzen für einen Spieler: kopiert dessen hinterlegte Anmeldedaten in
-   * resets/{token}. Ältere Links desselben Spielers werden dabei gelöscht.
-   */
-  async function createResetLink(b) {
-    const rec = await getDoc(sub("recovery", b.id));
-    const data = rec.exists() ? rec.data() : null;
-    if (!data?.secret || !data?.email) {
-      toast(`Für ${b.name} geht das leider noch nicht: ${b.name} muss die Seite seit dem Update einmal angemeldet geöffnet `
-        + "und das Passwort bestätigt haben. Ist das nicht mehr möglich, hilft nur ein neues Konto und erneutes Beitreten.", 10000);
-      return;
-    }
-    const { gameId } = ctx();
-    const old = await getDocs(query(collection(db, "games", gameId, "resets"), where("uid", "==", b.id)));
-    const token = randomId(24);
-    const batch = writeBatch(db);
-    old.docs.forEach((d) => batch.delete(d.ref));
-    batch.set(sub("resets", token), {
-      uid: b.id, name: String(b.name ?? ""), email: data.email, secret: data.secret, createdAt: serverTimestamp(),
-    });
-    await batch.commit();
-    const link = resetLink(gameId, token);
-    pwDialog.q("[data-link]").value = link;
-    pwDialog.el.querySelectorAll("[data-player]").forEach((el) => { el.textContent = b.name; });
-    pwDialog.q("[data-msg]").textContent = "";
-    pwDialog.q("[data-wa]").href = "https://wa.me/?text=" + encodeURIComponent(
-      `🔑 Hallo ${b.name}, mit diesem Link legst du ein neues Passwort fürs Weihnachtsbingo fest:
-${link}`);
-    openOverlay(pwDialog.el);
-  }
-
-  async function docsOf(names) {
-    const refs = [];
-    for (const name of names) {
-      const snap = await getDocs(collection(db, "games", ctx().gameId, name));
-      refs.push(...snap.docs.map((d) => d.ref));
-    }
-    return refs;
-  }
-
-  /** Löscht in Häppchen (ein Batch darf höchstens 500 Schreibvorgänge enthalten). */
-  async function deleteAll(refs, lastBatch = () => {}) {
-    for (let i = 0; i < refs.length || i === 0; i += 450) {
-      const batch = writeBatch(db);
-      for (const ref of refs.slice(i, i + 450)) batch.delete(ref);
-      if (i + 450 >= refs.length) lastBatch(batch);
-      await batch.commit();
-    }
-  }
-
-  /**
    * Entfernt alle anderen Spieler, leert das eigene Feld und löscht die Lieder der Abende
    * (auf Wunsch auch die Tageswörter). Entsperrt die Felder. Liederpool und Einladung bleiben.
    */
@@ -482,7 +389,7 @@ ${link}`);
     const { uid } = ctx();
     // Zuerst entsperren, sonst darf das eigene Feld nicht geleert werden
     await updateDoc(gameRef(), { locked: false });
-    const refs = (await docsOf(["boards", "members", "recovery", "resets", "songDays", ...(clearWords ? ["days"] : [])]))
+    const refs = (await docsOf(["boards", "members", "songDays", ...(clearWords ? ["days"] : [])]))
       .filter((ref) => !(ref.parent.id === "boards" && ref.id === uid));
     await deleteAll(refs, (batch) => batch.update(sub("boards", uid), { cells: emptyCells() }));
     st.openGrids.clear();
@@ -492,7 +399,7 @@ ${link}`);
   /** Löscht alle Unterdokumente und zuletzt das Spiel selbst. */
   async function deleteGame() {
     const { gameId, uid } = ctx();
-    const refs = await docsOf(["boards", "members", "recovery", "resets", "days", "songs", "songDays"]);
+    const refs = await docsOf(["boards", "members", "days", "songs", "songDays"]);
     refs.push(sub("private", "invite"));
     await deleteAll(refs, (batch) => {
       batch.delete(doc(db, "games", gameId));

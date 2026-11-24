@@ -2,14 +2,86 @@
 <html lang="de">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b2a1f">
   <meta name="robots" content="noindex">
-  <title>Weihnachtsbingo 2026</title>
-  <!-- Die Spielleitung ist jetzt der Reiter „Spiel“ in index.html (für alle, die ein Spiel erstellt haben). -->
-  <meta http-equiv="refresh" content="0; url=index.html">
-  <script>location.replace("index.html");</script>
+  <title>Weihnachtsbingo 2026 · Admin</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Mountains+of+Christmas:wght@700&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script src="js/lokal.js"></script>
 </head>
 <body>
-  <p><a href="index.html">Weiter zum Weihnachtsbingo</a></p>
+  <!-- Admin: Passwort-Links für alle Konten. Admin ist, wer in Firestore unter admins/{uid} steht
+       (nur in der Firebase-Konsole anlegen, siehe ANLEITUNG.md). -->
+  <header class="top">
+    <div class="garland" aria-hidden="true"></div>
+    <h1><span class="star" aria-hidden="true">★</span> Weihnachtsbingo 2026</h1>
+    <p id="greeting" class="greeting">🔧 Admin</p>
+  </header>
+
+  <main class="wrap">
+    <div id="loading" class="card center loading">
+      <div class="spinner" aria-hidden="true">🎄</div>
+      Wird geladen …
+    </div>
+
+    <div id="error" class="card center error" hidden></div>
+
+    <!-- Anmelden -->
+    <div id="auth" class="card pop-in" hidden>
+      <h2>🔧 Admin-Anmeldung</h2>
+      <p id="auth-note" class="muted">Mit deinem normalen Konto anmelden.</p>
+      <form id="auth-form" autocomplete="on">
+        <label for="auth-name">Benutzername</label>
+        <input id="auth-name" type="text" maxlength="30" autocomplete="username" autocapitalize="words" required>
+        <label for="auth-pass">Passwort</label>
+        <div class="pw-field">
+          <input id="auth-pass" type="password" autocomplete="current-password" required enterkeyhint="go">
+          <button type="button" class="pw-toggle" aria-label="Passwort anzeigen" aria-pressed="false">👁️</button>
+        </div>
+        <p id="auth-msg" class="msg"></p>
+        <button type="submit" id="auth-btn" class="btn primary block">Anmelden</button>
+      </form>
+      <p class="center"><a class="link-btn" href="index.html">← Zum Weihnachtsbingo</a></p>
+    </div>
+
+    <!-- Kein Admin -->
+    <div id="denied" class="card center pop-in" hidden>
+      <h2>🚫 Kein Zugriff</h2>
+      <p class="muted">Das Konto <strong id="denied-name"></strong> ist kein Admin.</p>
+      <p class="hint">Admin wird man in der Firebase-Konsole (siehe ANLEITUNG.md, „Admin einrichten“).
+        Die Konto-ID dafür: <code id="denied-uid"></code>
+        <button type="button" class="link-btn" id="denied-copy">kopieren</button></p>
+      <p class="row">
+        <a class="btn block" href="index.html">Zum Weihnachtsbingo</a>
+        <button type="button" class="btn block" data-logout>Abmelden</button>
+      </p>
+    </div>
+
+    <!-- Passwort-Links -->
+    <div id="admin" hidden>
+      <section class="card">
+        <h2>🔑 Passwort zurücksetzen</h2>
+        <p class="muted">Wer sein Passwort vergessen hat: Namen suchen, <strong>🔑 Link erstellen</strong> tippen und den
+          Link schicken. Der Link funktioniert nur einmal; ein neuer Link macht den alten ungültig.</p>
+        <input id="search" type="search" placeholder="Name suchen …" aria-label="Name suchen" autocomplete="off">
+        <p id="count" class="hint"></p>
+        <div id="accounts" class="admin-list"></div>
+        <p class="hint">Fehlt jemand? Dann hat sich die Person seit dem Update noch nicht angemeldet. Sie muss sich
+          einmal anmelden (oder ist noch angemeldet und bestätigt ihr Passwort), erst dann taucht sie hier auf.</p>
+      </section>
+      <p class="center">
+        <a class="link-btn" href="index.html">← Zum Weihnachtsbingo</a> ·
+        <button type="button" class="link-btn" data-logout>Abmelden</button>
+      </p>
+    </div>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script type="module" src="js/admin.js"></script>
 </body>
 </html>

@@ -721,6 +721,20 @@ input:focus { outline: none; border-color: var(--gold-deep); box-shadow: 0 0 0 4
 }
 .sub-box .muted { margin-top: 0; font-size: 0.92rem; }
 .sub-box .btn.block { margin-top: 6px; }
+
+/* admin.html: Konten mit Passwort-Link */
+.admin-list { display: grid; gap: 8px; margin: 4px 0 10px; }
+.admin-account {
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: var(--paper-2);
+  animation: fade-up 0.35s var(--ease) both;
+}
+.admin-account-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.admin-account-head strong { overflow-wrap: anywhere; }
+.admin-account-head .btn { flex: none; }
+.admin-link input { margin-top: 8px; font-size: 0.85rem; }
+.admin-link .row { margin-bottom: 0; flex-wrap: wrap; }
 .divider {
   display: flex;
   align-items: center;

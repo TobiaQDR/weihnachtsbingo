@@ -122,6 +122,9 @@ function banner() {
         <button type="button" data-lokal="day">Datum übernehmen</button>
       </div>
       <div class="lokal-row">
+        <button type="button" data-lokal="admin" title="Wie der Eintrag in admins/ in der Firebase-Konsole">Angemeldetes Konto zum Admin machen</button>
+      </div>
+      <div class="lokal-row">
         <button type="button" data-lokal="clear">Testdaten löschen</button>
         <button type="button" data-lokal="off">Testmodus beenden</button>
       </div>
@@ -141,6 +144,15 @@ function banner() {
         else localStorage.removeItem(DATE_KEY);
       } catch { /* egal */ }
       location.reload();
+    } else if (action === "admin") {
+      let email = "";
+      try { email = sessionStorage.getItem("bingoLokalAngemeldet") || ""; } catch { /* egal */ }
+      const acc = email && store.accounts[email];
+      if (!acc) return alert("In diesem Tab ist niemand angemeldet.");
+      const next = structuredClone(store);
+      next.docs[`admins/${acc.uid}`] = {};
+      commitStore(next);
+      alert("Dieses Konto ist jetzt Admin. admin.html öffnen.");
     } else if (action === "clear") {
       if (!confirm("Alle lokalen Testdaten (Konten, Spiele, Felder) löschen?")) return;
       try {
