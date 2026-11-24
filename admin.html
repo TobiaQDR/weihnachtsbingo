@@ -14,8 +14,8 @@
   <script src="js/lokal.js"></script>
 </head>
 <body>
-  <!-- Admin: Passwort-Links für alle Konten. Admin ist, wer in Firestore unter admins/{uid} steht
-       (nur in der Firebase-Konsole anlegen, siehe ANLEITUNG.md). -->
+  <!-- Admin: Passwort-Links für alle Konten. Anmeldung mit dem Admin-Konto (E-Mail + Passwort, in der
+       Firebase-Konsole angelegt); Admin ist, wer zusätzlich in Firestore unter admins/{uid} steht (ANLEITUNG.md). -->
   <header class="top">
     <div class="garland" aria-hidden="true"></div>
     <h1><span class="star" aria-hidden="true">★</span> Weihnachtsbingo 2026</h1>
@@ -33,10 +33,10 @@
     <!-- Anmelden -->
     <div id="auth" class="card pop-in" hidden>
       <h2>🔧 Admin-Anmeldung</h2>
-      <p id="auth-note" class="muted">Mit deinem normalen Konto anmelden.</p>
+      <p id="auth-note" class="muted">Mit dem Admin-Konto anmelden (E-Mail-Adresse und Passwort, nicht dein Spieler-Konto).</p>
       <form id="auth-form" autocomplete="on">
-        <label for="auth-name">Benutzername</label>
-        <input id="auth-name" type="text" maxlength="30" autocomplete="username" autocapitalize="words" required>
+        <label for="auth-email">E-Mail-Adresse</label>
+        <input id="auth-email" type="email" maxlength="254" autocomplete="username" autocapitalize="off" spellcheck="false" required>
         <label for="auth-pass">Passwort</label>
         <div class="pw-field">
           <input id="auth-pass" type="password" autocomplete="current-password" required enterkeyhint="go">
@@ -45,13 +45,15 @@
         <p id="auth-msg" class="msg"></p>
         <button type="submit" id="auth-btn" class="btn primary block">Anmelden</button>
       </form>
+      <p class="center"><button type="button" id="forgot-btn" class="link-btn">Passwort vergessen?</button></p>
+      <p id="forgot-msg" class="hint center"></p>
       <p class="center"><a class="link-btn" href="index.html">← Zum Weihnachtsbingo</a></p>
     </div>
 
     <!-- Kein Admin -->
     <div id="denied" class="card center pop-in" hidden>
       <h2>🚫 Kein Zugriff</h2>
-      <p class="muted">Das Konto <strong id="denied-name"></strong> ist kein Admin.</p>
+      <p class="muted">Das Konto <strong id="denied-email"></strong> ist (noch) kein Admin.</p>
       <p class="hint">Admin wird man in der Firebase-Konsole (siehe ANLEITUNG.md, „Admin einrichten“).
         Die Konto-ID dafür: <code id="denied-uid"></code>
         <button type="button" class="link-btn" id="denied-copy">kopieren</button></p>

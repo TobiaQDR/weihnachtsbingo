@@ -122,7 +122,7 @@ function banner() {
         <button type="button" data-lokal="day">Datum übernehmen</button>
       </div>
       <div class="lokal-row">
-        <button type="button" data-lokal="admin" title="Wie der Eintrag in admins/ in der Firebase-Konsole">Angemeldetes Konto zum Admin machen</button>
+        <button type="button" data-lokal="admin" title="Wie „Nutzer hinzufügen“ + admins/ in der Firebase-Konsole">Admin-Konto anlegen</button>
       </div>
       <div class="lokal-row">
         <button type="button" data-lokal="clear">Testdaten löschen</button>
@@ -145,14 +145,19 @@ function banner() {
       } catch { /* egal */ }
       location.reload();
     } else if (action === "admin") {
-      let email = "";
-      try { email = sessionStorage.getItem("bingoLokalAngemeldet") || ""; } catch { /* egal */ }
-      const acc = email && store.accounts[email];
-      if (!acc) return alert("In diesem Tab ist niemand angemeldet.");
+      // Wie in der echten Firebase-Konsole: Konto mit E-Mail + Passwort anlegen und in admins/ eintragen
+      const email = "admin@test.de";
+      const password = "admin123";
       const next = structuredClone(store);
-      next.docs[`admins/${acc.uid}`] = {};
+      const uid = next.accounts[email]?.uid ?? "lokaladmin";
+      next.accounts[email] = { uid, password };
+      next.docs[`admins/${uid}`] = { aktiv: true };
       commitStore(next);
-      alert("Dieses Konto ist jetzt Admin. admin.html öffnen.");
+      alert(`Admin-Konto angelegt.
+E-Mail: ${email}
+Passwort: ${password}
+
+Jetzt admin.html öffnen.`);
     } else if (action === "clear") {
       if (!confirm("Alle lokalen Testdaten (Konten, Spiele, Felder) löschen?")) return;
       try {

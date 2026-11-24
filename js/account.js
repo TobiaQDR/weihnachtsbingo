@@ -1,11 +1,10 @@
 // Konten: Anmelden mit Benutzername + Passwort, Firebase-Passwort als Zufallsgeheimnis,
-// Anmeldedaten für den Admin (Passwort zurücksetzen). Gemeinsam für index.html und admin.html.
+// Anmeldedaten für den Admin (Passwort zurücksetzen über admin.html).
 //
 //   users/{uid}         { name, games, secret, loginKey }   eigenes Konto
 //   logins/{loginKey}   { uid, email, secret }               Benutzername + Passwort → Firebase-Anmeldedaten
 //   recovery/{uid}      { name, email, secret }              Kopie für den Admin (nur Admin und man selbst)
 //   resets/{token}      { uid, name, email, secret, createdAt }   Link zum Zurücksetzen (index.html?passwort=…)
-//   admins/{uid}        {}                                   wer Admin ist (nur in der Firebase-Konsole anlegen)
 //
 // Das eigentliche Firebase-Passwort ist ein Zufallsgeheimnis (secret). Das eingetippte Passwort schaltet es nur
 // frei (logins/). So kann der Admin ohne Server ein Passwort zurücksetzen: Er gibt das Geheimnis per Link weiter,
@@ -95,17 +94,6 @@ export async function saveRecovery(user, name, secret) {
     await setDoc(doc(db, "recovery", user.uid), { name, email: user.email, secret });
   } catch (err) {
     console.warn("Anmeldedaten für den Admin nicht hinterlegt:", err);
-  }
-}
-
-/** Ist das angemeldete Konto Admin (Eintrag in admins/)? */
-export async function isAdmin(user) {
-  if (!user) return false;
-  try {
-    return (await getDoc(doc(db, "admins", user.uid))).exists();
-  } catch (err) {
-    console.warn("Admin-Prüfung:", err);
-    return false;
   }
 }
 

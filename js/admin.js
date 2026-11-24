@@ -1,17 +1,30 @@
-// admin.html: Passwort-Links für alle Konten. Nur für Konten, die in admins/{uid} stehen
-// (die Regeln lassen recovery/ und resets/ sonst gar nicht zu).
+// admin.html: Passwort-Links für alle Spieler-Konten.
 //
-//   recovery/{uid}   { name, email, secret }                    hinterlegt jedes Konto beim Anmelden
+// Der Admin meldet sich mit einem eigenen Firebase-Konto an (echte E-Mail-Adresse + Passwort, angelegt in der
+// Firebase-Konsole), nicht mit einem Spieler-Konto. Damit sich Admin- und Spieler-Anmeldung im selben Browser
+// nicht gegenseitig abmelden, läuft die Seite mit einer eigenen Firebase-Instanz ("admin").
+// Admin ist nur, wer zusätzlich in admins/{uid} steht (nur in der Konsole anlegbar; die Regeln lassen
+// recovery/ und resets/ sonst gar nicht zu).
+//
+//   recovery/{uid}   { name, email, secret }                    hinterlegt jedes Spieler-Konto beim Anmelden
 //   resets/{token}   { uid, name, email, secret, createdAt }    Link index.html?passwort=<token>, einmal gültig
 
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import {
-  doc, collection, getDoc, getDocs, query, where, writeBatch, serverTimestamp,
+  getFirestore, doc, collection, getDoc, getDocs, query, where, writeBatch, serverTimestamp,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
-import { signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
-import { db, configured } from "./firebase.js";
-import { auth, authReady, signInWithName, setSecret, isAdmin, authErrorText } from "./account.js";
-import { cleanName, escapeHtml, normalize, randomId } from "./bingo.js";
+import {
+  getAuth, onAuthStateChanged, signInWithEmailAndPassword, sendPasswordResetEmail, signOut,
+} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+import { firebaseConfig } from "./firebase-config.js";
+import { configured } from "./firebase.js";
+import { escapeHtml, normalize, randomId } from "./bingo.js";
 import { $, toast, copyText, startSnow, initPasswordToggles, resetPasswords } from "./ui.js";
+
+const app = configured ? initializeApp(firebaseConfig, "admin") : null;
+const auth = app ? getAuth(app) : null;
+const db = app ? getFirestore(app) : null;
+if (auth) auth.languageCode = "de";
 
 const SCREENS = ["loading", "error", "auth", "denied", "admin"];
 function showScreen(name) {
@@ -33,23 +46,38 @@ if (!configured) {
   authReady().then(() => check(auth.currentUser)).catch(fail);
 }
 
+function authReady() {
+  return typeof auth.authStateReady === "function"
+    ? auth.authStateReady()
+    : new Promise((resolve) => { const off = onAuthStateChanged(auth, () => { off(); resolve(); }); });
+}
+
 function fail(err) {
   console.error(err);
   showScreen("error");
   $("error").textContent = "Die Daten konnten nicht geladen werden. Bitte prüfe die Internetverbindung und lade die Seite neu.";
 }
 
+async function isAdmin(user) {
+  try {
+    return (await getDoc(doc(db, "admins", user.uid))).exists();
+  } catch (err) {
+    console.warn("Admin-Prüfung:", err);
+    return false;
+  }
+}
+
 async function check(user) {
   if (!user || user.isAnonymous) {
     resetPasswords($("auth"));
+    $("forgot-msg").textContent = "";
     showScreen("auth");
-    $("auth-name").focus();
+    $("auth-email").focus();
     return;
   }
   showScreen("loading");
   if (!(await isAdmin(user))) {
-    const s = await getDoc(doc(db, "users", user.uid)).catch(() => null);
-    $("denied-name").textContent = String(s?.data()?.name ?? "");
+    $("denied-email").textContent = user.email ?? "";
     $("denied-uid").textContent = user.uid;
     showScreen("denied");
     return;
@@ -58,23 +86,62 @@ async function check(user) {
   showScreen("admin");
 }
 
+function errorText(err) {
+  switch (err?.code) {
+    case "auth/invalid-credential":
+    case "auth/invalid-login-credentials":
+    case "auth/wrong-password":
+    case "auth/user-not-found":
+      return "E-Mail-Adresse oder Passwort stimmt nicht.";
+    case "auth/invalid-email":
+      return "Das ist keine gültige E-Mail-Adresse.";
+    case "auth/too-many-requests":
+      return "Zu viele Versuche. Bitte warte kurz und versuche es dann nochmal.";
+    case "auth/network-request-failed":
+      return "Keine Verbindung. Bitte prüfe die Internetverbindung.";
+    case "auth/operation-not-allowed":
+      return "Anmelden mit E-Mail/Passwort ist in Firebase nicht aktiviert.";
+    default:
+      return "Das hat leider nicht geklappt. Bitte nochmal versuchen.";
+  }
+}
+
 $("auth-form").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const name = cleanName($("auth-name").value);
+  const email = $("auth-email").value.trim();
   const password = $("auth-pass").value;
   const msg = $("auth-msg");
   msg.textContent = "";
   $("auth-btn").disabled = true;
   try {
-    const { user, legacy } = await signInWithName(name, password);
-    // Altes Konto gleich umstellen (wie beim Anmelden auf der Spielseite)
-    if (legacy) await setSecret(user, name, password).catch((err) => console.warn("Umstellung:", err));
+    const { user } = await signInWithEmailAndPassword(auth, email, password);
     await check(user);
   } catch (err) {
     console.error(err);
-    msg.textContent = authErrorText(err);
+    msg.textContent = errorText(err);
   } finally {
     $("auth-btn").disabled = false;
+  }
+});
+
+// Passwort vergessen: Firebase schickt eine Mail zum Zurücksetzen (nur für das Admin-Konto)
+$("forgot-btn").addEventListener("click", async () => {
+  const email = $("auth-email").value.trim();
+  const msg = $("forgot-msg");
+  if (!email) {
+    msg.textContent = "Bitte oben zuerst die E-Mail-Adresse eintragen.";
+    $("auth-email").focus();
+    return;
+  }
+  $("forgot-btn").disabled = true;
+  try {
+    await sendPasswordResetEmail(auth, email);
+    msg.textContent = `📧 Falls es ein Konto mit ${email} gibt, ist eine Mail zum Zurücksetzen unterwegs (auch im Spam-Ordner nachsehen).`;
+  } catch (err) {
+    console.error(err);
+    msg.textContent = errorText(err);
+  } finally {
+    $("forgot-btn").disabled = false;
   }
 });
 

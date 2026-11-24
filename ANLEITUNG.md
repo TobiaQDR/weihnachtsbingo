@@ -71,8 +71,8 @@ lassen) und der Browser mit <http://localhost:8000/index.html?lokal>. Unten link
 - Ohne die `.bat`: Terminal im Projektordner öffnen, `python lokal-server.py` eingeben und
   <http://localhost:8000/index.html?lokal> öffnen. (Dieser Server sorgt dafür, dass der Browser keine
   alten Dateien aus dem Zwischenspeicher zeigt.)
-- Der Admin-Bereich lokal: <http://localhost:8000/admin.html>. Vorher im 🧪-Menü
-  „Angemeldetes Konto zum Admin machen“ tippen.
+- Der Admin-Bereich lokal: im 🧪-Menü **Admin-Konto anlegen** tippen, dann
+  <http://localhost:8000/admin.html> öffnen und mit `admin@test.de` / `admin123` anmelden.
 
 ### Mit der echten Datenbank
 
@@ -162,9 +162,8 @@ mit einem zweiten Testkonto beitreten.
 - Das gilt für **alle Konten**, egal in welchen Spielen jemand mitspielt oder ob er selbst Spielleitung ist.
 - Der Link funktioniert **nur einmal**. Erzeugst du einen neuen, wird der alte ungültig.
   Den Link nur an die betroffene Person schicken, nicht in die Gruppe: Wer ihn hat, kommt in das Konto.
-- **Dein eigenes Passwort als Admin gut merken:** Vergisst du es, kannst du dir selbst keinen Link mehr
-  über `admin.html` erstellen. (Dann hilft nur, in der Firebase-Konsole ein zweites Konto zum Admin zu
-  machen und damit den Link zu erzeugen.)
+- Auch für dein **eigenes Spieler-Konto** kannst du dir so einen Link erstellen. Vergisst du das
+  Passwort des **Admin-Kontos**, hilft „Passwort vergessen?“ auf `admin.html` (Mail an deine Adresse).
 - **Konten von vor diesem Update:** Beim ersten Öffnen nach dem Update fragt die Seite einmal nach dem
   Passwort (oder man meldet sich einfach neu an). Erst danach taucht das Konto in `admin.html` auf.
   Weiß jemand sein Passwort schon nicht mehr und ist auch nirgends mehr angemeldet, hilft nur
@@ -176,15 +175,27 @@ mit einem zweiten Testkonto beitreten.
 
 ### Admin einrichten (Passwort-Links)
 
-Einmalig, sobald du ein Konto auf der Seite hast:
+Als Admin meldest du dich auf `admin.html` mit einem **eigenen Admin-Konto** an: deiner echten
+E-Mail-Adresse und einem Passwort. Das ist ein anderes Konto als dein Spieler-Konto (Benutzername). Du
+kannst in einem Browser gleichzeitig als Spieler und als Admin angemeldet sein. Einmalig einrichten:
 
-1. `admin.html` öffnen (z. B. `https://<dein-name>.github.io/weihnachtsbingo/admin.html`) und mit deinem
-   normalen Konto anmelden. Es erscheint **🚫 Kein Zugriff** mit deiner **Konto-ID** – auf **kopieren** tippen.
-2. In Firebase **Firestore Database → Daten → Sammlung starten**:
+1. In Firebase **Authentication → Nutzer → Nutzer hinzufügen**: deine E-Mail-Adresse und ein Passwort
+   (mindestens 6 Zeichen) eintragen → Nutzer hinzufügen.
+2. In der Liste steht bei dem neuen Nutzer die **Nutzer-UID**. Auf das Kopier-Symbol daneben klicken.
+3. In Firebase **Firestore Database → Daten → Sammlung starten**:
    - Sammlungs-ID: `admins`
-   - Dokument-ID: die kopierte Konto-ID einfügen
+   - Dokument-ID: die kopierte Nutzer-UID einfügen
    - ein Feld anlegen, z. B. Name `aktiv`, Typ `boolean`, Wert `true` → Speichern
-3. `admin.html` neu laden: Jetzt siehst du alle Konten und kannst Passwort-Links erstellen.
+4. `admin.html` öffnen (z. B. `https://<dein-name>.github.io/weihnachtsbingo/admin.html`) und mit
+   E-Mail-Adresse und Passwort anmelden. Jetzt siehst du alle Konten und kannst Passwort-Links erstellen.
+
+Steht dort **🚫 Kein Zugriff**, fehlt der Eintrag in `admins` oder die Dokument-ID passt nicht. Die
+richtige Konto-ID steht dann auf dem Bildschirm (mit Knopf zum Kopieren). Prüfe auch, dass die neuen
+Regeln veröffentlicht sind.
+
+**Admin-Passwort vergessen?** Auf `admin.html` die E-Mail-Adresse eintragen und auf **Passwort vergessen?**
+tippen. Firebase schickt dann eine Mail zum Zurücksetzen (Absender `noreply@…firebaseapp.com`, notfalls im
+Spam-Ordner nachsehen).
 
 Diese Sammlung kann nur in der Firebase-Konsole geändert werden, nicht über die Seite. Einen weiteren
 Admin legst du genauso an; Admin-Rechte entziehen = das Dokument dort löschen.
@@ -285,7 +296,7 @@ Passwort-Links erstellt jetzt nur noch der Admin über `admin.html`, nicht mehr 
    einfügen und **Veröffentlichen**.
 2. Dann alle Dateien wieder bei GitHub hochladen (neu: `admin.html`, `js/admin.js`, `js/account.js`,
    `js/lokal.js`).
-3. Dich zum Admin machen, siehe [„Admin einrichten“](#admin-einrichten-passwort-links).
+3. Dein Admin-Konto anlegen, siehe [„Admin einrichten“](#admin-einrichten-passwort-links).
 4. Die Konten erscheinen in `admin.html`, sobald sich jeder einmal mit der neuen Version angemeldet hat
    (wer schon angemeldet ist: einfach die Seite öffnen).
 5. Optional aufräumen: In **Firestore Database → Daten** unter jedem Spiel die Untersammlungen
